@@ -1,0 +1,53 @@
+plugins {
+	id 'java'
+	id 'org.springframework.boot' version '4.0.1'
+	id 'io.spring.dependency-management' version '1.1.7'
+}
+
+group = 'com.myide'
+version = '0.0.1-SNAPSHOT'
+description = 'Demo project for Spring Boot'
+
+java {
+	toolchain {
+		languageVersion = JavaLanguageVersion.of(17)
+	}
+}
+
+repositories {
+	mavenCentral()
+}
+
+dependencies {
+	implementation 'org.springframework.boot:spring-boot-starter'
+	testImplementation 'org.springframework.boot:spring-boot-starter-test'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // 1. 기본 웹 & 톰캣 (API 서버)
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+
+    // 2. 실시간 통신 (Xterm.js 연동, 협업 모드 CRDT, 채팅용)
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
+    // 3. Docker 제어 (샌드박스 실행용 - 핵심!)
+    implementation 'com.github.docker-java:docker-java:3.4.0'
+    implementation 'com.github.docker-java:docker-java-transport-httpclient5:3.4.0'
+    implementation 'org.apache.httpcomponents.client5:httpclient5:5.2.1'
+
+    // 4. 데이터베이스 & JPA (회원가입, 프로젝트 저장, 일정 관리)
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    runtimeOnly 'com.h2database:h2' // 개발 단계에선 가벼운 H2 사용 (나중에 MySQL로 교체)
+
+    // 5. 로그인 & 보안 (Social Login, GitHub/Google)
+    //implementation 'org.springframework.boot:spring-boot-starter-security'
+    //implementation 'org.springframework.boot:spring-boot-starter-oauth2-client'
+
+    // 6. 편의 도구
+    compileOnly 'org.projectlombok:lombok' // 코드 다이어트 (Getter/Setter 생략)
+    annotationProcessor 'org.projectlombok:lombok'
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+}
+
+tasks.named('test') {
+	useJUnitPlatform()
+}
