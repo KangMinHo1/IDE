@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 2,
+  "meta": {
+    "projectSummary": "중고 물품 거래 웹",
+    "techStack": {
+      "backend": "Spring Boot",
+      "frontend": "React",
+      "db": "MySQL"
+    },
+    "legacyFlow": {
+      "nodesJson": "[{\"id\":\"f9\",\"data\":{\"label\":\"옛 노드\",\"type\":\"db\",\"techStack\":\"MySQL\"}}]",
+      "edgesJson": "[{\"id\":\"fe9\",\"source\":\"f9\",\"target\":\"f9\",\"label\":\"옛 연결\"}]"
+    }
+  },
+  "requirements": [
+    {
+      "id": "req_aaaaaaaa",
+      "code": "R-01",
+      "category": "회원",
+      "name": "로그인",
+      "description": "이메일과 비밀번호로 로그인한다",
+      "priority": "must",
+      "screenIds": [
+        "scr_bbbbbbbb"
+      ],
+      "apiIds": [
+        "api_cccccccc"
+      ]
+    }
+  ],
+  "screens": [
+    {
+      "id": "scr_bbbbbbbb",
+      "key": "/login",
+      "name": "로그인 화면",
+      "description": "이메일 입력 폼",
+      "role": "modal",
+      "isEntry": true,
+      "requiresAuth": false,
+      "requirementIds": [
+        "req_aaaaaaaa"
+      ],
+      "apiIds": [
+        "api_cccccccc"
+      ],
+      "layout": {
+        "x": 120.5,
+        "y": 240
+      }
+    },
+    {
+      "id": "scr_dddddddd",
+      "key": "/products",
+      "name": "상품 목록",
+      "description": "",
+      "role": "page",
+      "isEntry": false,
+      "requiresAuth": true,
+      "requirementIds": [],
+      "apiIds": [],
+      "layout": {
+        "x": 400,
+        "y": 240
+      }
+    }
+  ],
+  "screenTransitions": [
+    {
+      "id": "trn_eeeeeeee",
+      "from": "scr_bbbbbbbb",
+      "to": "scr_dddddddd",
+      "trigger": "로그인 버튼 클릭",
+      "kind": "submit",
+      "condition": "성공 시",
+      "apiIds": [
+        "api_cccccccc"
+      ]
+    }
+  ],
+  "apis": [
+    {
+      "id": "api_cccccccc",
+      "method": "POST",
+      "endpoint": "/api/auth/login",
+      "description": "로그인",
+      "request": "{\"email\":\"a@b.c\"}",
+      "response": "{\"accessToken\":\"...\"}",
+      "auth": false,
+      "crud": "R",
+      "requirementIds": [
+        "req_aaaaaaaa"
+      ],
+      "screenIds": [
+        "scr_bbbbbbbb"
+      ],
+      "tableIds": [
+        "tbl_ffffffff"
+      ]
+    }
+  ],
+  "erd": {
+    "tables": [
+      {
+        "id": "tbl_ffffffff",
+        "name": "users",
+        "entityName": "User",
+        "description": "회원",
+        "columns": [
+          {
+            "id": "col_11111111",
+            "name": "id",
+            "type": "BIGINT",
+            "length": null,
+            "nullable": false,
+            "isPk": true,
+            "isFk": false,
+            "defaultValue": "",
+            "comment": "PK"
+          },
+          {
+            "id": "col_22222222",
+            "name": "email",
+            "type": "VARCHAR",
+            "length": 255,
+            "nullable": false,
+            "isPk": false,
+            "isFk": false,
+            "defaultValue": "''",
+            "comment": "로그인 아이디"
+          }
+        ],
+        "layout": {
+          "x": 60,
+          "y": 80
+        }
+      },
+      {
+        "id": "tbl_99999999",
+        "name": "products",
+        "entityName": "Product",
+        "description": "",
+        "columns": [
+          {
+            "id": "col_33333333",
+            "name": "id",
+            "type": "BIGINT",
+            "length": null,
+            "nullable": false,
+            "isPk": true,
+            "isFk": false,
+            "defaultValue": "",
+            "comment": ""
+          },
+          {
+            "id": "col_44444444",
+            "name": "user_id",
+            "type": "BIGINT",
+            "length": null,
+            "nullable": false,
+            "isPk": false,
+            "isFk": true,
+            "defaultValue": "",
+            "comment": ""
+          }
+        ],
+        "layout": {
+          "x": 460,
+          "y": 80
+        }
+      }
+    ],
+    "relations": [
+      {
+        "id": "rel_88888888",
+        "fromTableId": "tbl_99999999",
+        "fromColumnId": "col_44444444",
+        "toTableId": "tbl_ffffffff",
+        "toColumnId": "col_11111111",
+        "cardinality": "1:N",
+        "onDelete": "CASCADE",
+        "note": "회원이 상품을 소유한다"
+      }
+    ]
+  }
+}
