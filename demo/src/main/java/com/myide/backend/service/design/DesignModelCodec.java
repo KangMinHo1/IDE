@@ -8,6 +8,8 @@ import com.myide.backend.dto.design.v2.DesignModelV2;
 import com.myide.backend.dto.design.v2.LegacyProjectionV2;
 import com.myide.backend.dto.design.v2.RelationV2;
 import com.myide.backend.dto.design.v2.RequirementV2;
+import com.myide.backend.dto.design.v2.ScreenTransitionV2;
+import com.myide.backend.dto.design.v2.ScreenV2;
 import com.myide.backend.dto.design.v2.TableV2;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -95,14 +97,71 @@ public class DesignModelCodec {
             ));
         }
 
+        boolean hasScreens = !safe.screens().isEmpty();
+
         return new LegacyProjectionV2(
                 requirements,
                 apiSpecs,
                 writeJson(buildErdNodes(safe)),
                 writeJson(buildErdEdges(safe)),
-                safe.meta().legacyFlow().nodesJson(),
-                safe.meta().legacyFlow().edgesJson()
+                hasScreens ? writeJson(buildFlowNodes(safe)) : safe.meta().legacyFlow().nodesJson(),
+                hasScreens ? writeJson(buildFlowEdges(safe)) : safe.meta().legacyFlow().edgesJson()
         );
+    }
+
+    /**
+     * 화면 흐름을 예전 데이터 플로우 형식으로 옮긴다.
+     *
+     * 자료실과 마이페이지는 아직 예전 형식만 읽는다. 여기서 화면 흐름을
+     * 내보내지 않으면 사용자가 지금 관리하는 흐름은 그 화면들에 영영 보이지
+     * 않고, 시드 때 보관해 둔 옛 다이어그램만 계속 보인다.
+     *
+     * 화면이 하나도 없을 때만 보관된 원본을 그대로 돌려준다. 아직 새 탭을
+     * 써 보지 않은 워크스페이스에서 자료실이 갑자기 비어 보이지 않게 한다.
+     */
+    private List<Map<String, Object>> buildFlowNodes(DesignModelV2 model) {
+        List<Map<String, Object>> nodes = new ArrayList<>();
+
+        for (ScreenV2 screen : model.screens()) {
+            Map<String, Object> position = new LinkedHashMap<>();
+            position.put("x", screen.layout().x());
+            position.put("y", screen.layout().y());
+
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("label", screen.name());
+            data.put("type", "client");
+            // 예전 형식에는 라우트를 담을 자리가 없어 부가 설명 칸을 빌려 쓴다.
+            data.put("techStack", screen.key());
+
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("id", screen.id());
+            node.put("type", "systemNode");
+            node.put("position", position);
+            node.put("data", data);
+
+            nodes.add(node);
+        }
+
+        return nodes;
+    }
+
+    private List<Map<String, Object>> buildFlowEdges(DesignModelV2 model) {
+        List<Map<String, Object>> edges = new ArrayList<>();
+
+        for (ScreenTransitionV2 transition : model.screenTransitions()) {
+            Map<String, Object> edge = new LinkedHashMap<>();
+            edge.put("id", transition.id());
+            edge.put("source", transition.from());
+            edge.put("target", transition.to());
+            edge.put("animated", true);
+            edge.put("label", transition.condition().isBlank()
+                    ? transition.trigger()
+                    : transition.trigger() + " (" + transition.condition() + ")");
+
+            edges.add(edge);
+        }
+
+        return edges;
     }
 
     private List<Map<String, Object>> buildErdNodes(DesignModelV2 model) {

@@ -168,9 +168,12 @@ class DesignModelCodecContractTest {
         assertThat(numericSafe(objectMapper.readTree(actual.erdEdgesJson())))
                 .isEqualTo(numericSafe(objectMapper.readTree(expected.get("erdEdgesJson").asText())));
 
-        // 데이터 플로우는 변환하지 않고 원본을 그대로 통과시키므로 문자열이 같아야 한다.
-        assertThat(actual.flowNodesJson()).isEqualTo(expected.get("flowNodesJson").asText());
-        assertThat(actual.flowEdgesJson()).isEqualTo(expected.get("flowEdgesJson").asText());
+        // 화면이 있으면 화면 흐름을 예전 형식으로 내보낸다.
+        // 자료실이 사용자가 지금 관리하는 흐름을 보여주게 하기 위한 것이다.
+        assertThat(numericSafe(objectMapper.readTree(actual.flowNodesJson())))
+                .isEqualTo(numericSafe(objectMapper.readTree(expected.get("flowNodesJson").asText())));
+        assertThat(numericSafe(objectMapper.readTree(actual.flowEdgesJson())))
+                .isEqualTo(numericSafe(objectMapper.readTree(expected.get("flowEdgesJson").asText())));
     }
 
     @Test
@@ -179,6 +182,9 @@ class DesignModelCodecContractTest {
         DesignModelV2 empty = codec.fromJson("");
         assertThat(empty.requirements()).isEmpty();
         assertThat(empty.erd().tables()).isEmpty();
+
+        // 화면이 하나도 없으면 보관해 둔 예전 데이터 플로우를 그대로 돌려준다.
+        // 아직 새 탭을 써 보지 않은 워크스페이스에서 자료실이 비어 보이면 안 된다.
         assertThat(codec.toLegacy(empty).flowNodesJson()).isEqualTo("[]");
 
         // 모르는 필드가 섞여 와도 문서 전체를 버리지 않는다.
