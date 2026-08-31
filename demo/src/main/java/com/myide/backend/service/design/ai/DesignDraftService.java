@@ -492,7 +492,13 @@ public class DesignDraftService {
         } catch (GeminiHttpClient.ResponseTruncatedException e) {
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "AI 응답이 너무 길어 잘렸습니다. 설명을 조금 더 좁혀서 다시 시도해 주세요.");
+        } catch (GeminiHttpClient.GeminiConfigException e) {
+            // 기다려도 풀리지 않는 실패라 "잠시 후 다시" 안내를 하면 안 된다.
+            log.error("⚠️ [AI] {}", e.getMessage());
+            throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "AI 설정에 문제가 있어 초안을 만들 수 없습니다. 서버 로그를 확인해 주세요.");
         } catch (GeminiHttpClient.GeminiUnavailableException e) {
+            log.warn("⚠️ [AI] 초안 생성 실패: {}", e.getMessage());
             throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
                     "지금은 AI를 쓸 수 없습니다. 잠시 후 다시 시도해 주세요.");
         }

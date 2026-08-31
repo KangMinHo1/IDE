@@ -242,6 +242,18 @@ class DesignDraftServiceTest {
                 .contains("AI를 쓸 수 없습니다");
     }
 
+    @Test
+    @DisplayName("키 문제는 기다려도 안 풀리므로 다시 시도하라고 하지 않는다")
+    void reportsConfigProblemDifferently() {
+        Mockito.when(gemini.generate(Mockito.anyString(), Mockito.any()))
+                .thenThrow(new GeminiHttpClient.GeminiConfigException("키가 유효하지 않습니다"));
+
+        String message = catchMessage(() -> service.generateSkeleton("무언가", stack(), null));
+
+        assertThat(message).contains("AI 설정에 문제가 있어");
+        assertThat(message).doesNotContain("잠시 후");
+    }
+
     // ── 도우미 ──────────────────────────────────────────────────────
 
     private TechStackV2 stack() {

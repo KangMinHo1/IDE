@@ -83,6 +83,19 @@ public class GeminiHttpClient {
         }
     }
 
+    /**
+     * 키가 틀렸거나 권한이 없어 실패한 경우.
+     *
+     * 기다린다고 풀리는 실패가 아니라서 따로 구분한다. 섞어 두면 사용자에게
+     * "잠시 후 다시 시도해 주세요"라고 안내하게 되는데, 아무리 기다려도
+     * 고쳐지지 않으므로 그 안내가 오히려 시간을 뺏는다.
+     */
+    public static class GeminiConfigException extends GeminiUnavailableException {
+        public GeminiConfigException(String message) {
+            super(message);
+        }
+    }
+
     public boolean isConfigured() {
         return apiKey != null && !apiKey.isBlank() && url != null && !url.isBlank();
     }
@@ -103,14 +116,17 @@ public class GeminiHttpClient {
                     return extractText(response.body());
                 }
 
+                String reason = describeFailure(response.statusCode(), response.body());
+
                 if (!shouldRetry(response.statusCode())) {
-                    throw new GeminiUnavailableException(
-                            "AI 요청이 거부되었습니다 (" + response.statusCode() + ")");
+                    log.warn("⚠️ [AI] {}", reason);
+                    throw isKeyProblem(response.statusCode(), response.body())
+                            ? new GeminiConfigException(reason)
+                            : new GeminiUnavailableException(reason);
                 }
 
-                lastError = new GeminiUnavailableException(
-                        "AI 응답 실패 (" + response.statusCode() + ")");
-                log.warn("⚠️ [AI] {}회차 실패: {}", attempt, response.statusCode());
+                lastError = new GeminiUnavailableException(reason);
+                log.warn("⚠️ [AI] {}회차 실패: {}", attempt, reason);
             } catch (ResponseTruncatedException e) {
                 // 잘린 응답은 다시 보내도 같은 결과다. 호출한 쪽이 쪼개야 한다.
                 throw e;
@@ -142,6 +158,46 @@ public class GeminiHttpClient {
 
     private boolean shouldRetry(int statusCode) {
         return statusCode == 429 || statusCode >= 500;
+    }
+
+    /**
+     * 실패 이유를 사람이 읽을 수 있는 한 줄로 만든다.
+     *
+     * 이게 없던 동안에는 상태 코드만 남기고 응답 본문을 버려서, 키가 틀린 것과
+     * 잠시 막힌 것을 로그만 보고 구분할 수 없었다. Gemini 는 이유를 본문에
+     * 정확히 적어 보내므로 그대로 옮긴다.
+     */
+    String describeFailure(int statusCode, String body) {
+        if (isKeyProblem(statusCode, body)) {
+            return "Gemini API 키가 유효하지 않습니다 (" + statusCode
+                    + "). application-secret.yml 의 google.gemini.api-key 를 확인해 주세요.";
+        }
+
+        String message = errorMessage(body);
+        return message.isEmpty()
+                ? "AI 요청이 거부되었습니다 (" + statusCode + ")"
+                : "AI 요청이 거부되었습니다 (" + statusCode + "): " + message;
+    }
+
+    boolean isKeyProblem(int statusCode, String body) {
+        if (statusCode == 401 || statusCode == 403) {
+            return true;
+        }
+
+        // 키가 틀리면 Gemini 는 401 이 아니라 400 + API_KEY_INVALID 로 답한다.
+        return statusCode == 400 && body != null && body.contains("API_KEY_INVALID");
+    }
+
+    private String errorMessage(String body) {
+        if (body == null || body.isBlank()) {
+            return "";
+        }
+
+        try {
+            return objectMapper.readTree(body).path("error").path("message").asText("");
+        } catch (Exception e) {
+            return body.length() > 200 ? body.substring(0, 200) : body;
+        }
     }
 
     private void sleepBeforeRetry(int attempt) {
