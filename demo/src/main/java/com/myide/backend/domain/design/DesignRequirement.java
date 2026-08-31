@@ -47,13 +47,17 @@ public class DesignRequirement {
 
     @Builder
     private DesignRequirement(
+            String uuid,
             Workspace workspace,
             User createdBy,
             String category,
             String name,
             String description
     ) {
-        this.uuid = UUID.randomUUID().toString();
+        // uuid 를 받는 이유: 설계 v2 문서를 예전 형식으로 되쓸 때(역투영)
+        // 문서의 항목 id 를 그대로 uuid 로 써야 행을 제자리에서 갱신할 수 있다.
+        // 안 받으면 자동 저장이 돌 때마다 행 전체를 지웠다 다시 넣게 된다.
+        this.uuid = uuid == null || uuid.isBlank() ? UUID.randomUUID().toString() : uuid;
         this.workspace = workspace;
         this.createdBy = createdBy;
         this.category = category == null || category.isBlank() ? "기본" : category;
