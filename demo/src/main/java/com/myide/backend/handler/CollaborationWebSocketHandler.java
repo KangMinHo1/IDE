@@ -59,6 +59,13 @@ public class CollaborationWebSocketHandler extends BinaryWebSocketHandler {
 
     // 💡 [핵심 해결] 정확하게 쿼리 파라미터(?room=...)에서 방 이름을 뽑아냅니다!
     private String getRoomName(WebSocketSession session) {
+        // 핸드셰이크에서 이미 뽑아 둔 값이 있으면 그것을 쓴다.
+        // 토큰 같은 다른 쿼리 파라미터가 붙어도 방 이름이 흔들리지 않는다.
+        Object cached = session.getAttributes().get("COLLAB_ROOM");
+        if (cached instanceof String cachedRoom && !cachedRoom.isBlank()) {
+            return cachedRoom;
+        }
+
         URI uri = session.getUri();
         if (uri != null && uri.getQuery() != null) {
             String[] params = uri.getQuery().split("&");

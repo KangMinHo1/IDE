@@ -2,6 +2,7 @@
 package com.myide.backend.config;
 
 import com.myide.backend.handler.*;
+import com.myide.backend.security.CollabHandshakeInterceptor;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.socket.config.annotation.EnableWebSocket;
@@ -18,6 +19,7 @@ public class WebSocketConfig implements WebSocketConfigurer {
     private final TerminalWebSocketHandler terminalWebSocketHandler;
     private final CollaborationWebSocketHandler collaborationWebSocketHandler;
     private final WorkspaceEventWebSocketHandler workspaceEventWebSocketHandler;
+    private final CollabHandshakeInterceptor collabHandshakeInterceptor;
 
     private static final String[] ALLOWED_ORIGIN_PATTERNS = {
             "http://localhost:*",
@@ -55,7 +57,10 @@ public class WebSocketConfig implements WebSocketConfigurer {
         registry.addHandler(terminalWebSocketHandler, "/ws/terminal")
                 .setAllowedOriginPatterns(ALLOWED_ORIGIN_PATTERNS);
 
+        // 설계 문서와 코드 동시편집이 같은 엔드포인트를 쓴다.
+        // 핸드셰이크 단계에서 JWT와 워크스페이스 멤버십을 확인한다.
         registry.addHandler(collaborationWebSocketHandler, "/ws/collab")
+                .addInterceptors(collabHandshakeInterceptor)
                 .setAllowedOriginPatterns(ALLOWED_ORIGIN_PATTERNS);
 
         // 파일 트리 변경 이벤트용
