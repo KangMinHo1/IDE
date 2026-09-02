@@ -15,6 +15,7 @@ import com.myide.backend.dto.design.v2.ScreenV2;
 import com.myide.backend.dto.design.v2.TableV2;
 import com.myide.backend.dto.design.v2.TechStackV2;
 import com.myide.backend.service.ai.GeminiHttpClient;
+import com.myide.backend.service.design.doctor.rules.ErdRules;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -29,6 +30,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.UUID;
 
 /**
@@ -45,6 +47,20 @@ public class DesignDraftService {
 
     private static final int SKELETON_MAX_TOKENS = 16384;
     private static final int DETAIL_MAX_TOKENS = 32768;
+
+    /** 설계 점검(SCR_INVALID_ROUTE)이 받아들이는 경로 형식. */
+    private static final Pattern ROUTE = Pattern.compile("^/[A-Za-z0-9\\-_/:\\[\\]]*$");
+
+    /** 예약어를 사람이 읽기 좋은 이름으로 바꾼다. 목록에 없으면 뒤에 _value 를 붙인다. */
+    private static final Map<String, String> RESERVED_RENAMES = Map.of(
+            "order", "order_no",
+            "group", "group_name",
+            "key", "key_name",
+            "desc", "description",
+            "asc", "asc_order",
+            "index", "index_no",
+            "table", "table_name",
+            "class", "class_name");
 
     /** 설계 점검이 아는 타입만 남긴다. 모르는 타입은 코드 생성에서 막힌다. */
     private static final Set<String> KNOWN_TYPES = Set.of(
@@ -102,15 +118,18 @@ public class DesignDraftService {
             ));
         }
 
+        Set<String> usedRoutes = new HashSet<>();
+
         for (JsonNode item : root.path("screens")) {
-            String id = screenIdByKey.get(item.path("key").asText(""));
+            String screenKey = item.path("key").asText("");
+            String id = screenIdByKey.get(screenKey);
             if (id == null) {
                 continue;
             }
 
             screens.add(new ScreenV2(
                     id,
-                    text(item, "route", ""),
+                    safeRoute(text(item, "route", ""), screenKey, usedRoutes),
                     text(item, "name", ""),
                     text(item, "description", ""),
                     text(item, "role", "page"),
@@ -177,7 +196,7 @@ public class DesignDraftService {
             List<ColumnV2> columns = new ArrayList<>();
 
             for (JsonNode columnNode : item.path("columns")) {
-                String columnName = text(columnNode, "name", "").trim();
+                String columnName = safeColumnName(text(columnNode, "name", "").trim());
                 if (columnName.isEmpty()
                         || columnIds.containsKey(columnName.toLowerCase(Locale.ROOT))) {
                     continue;
@@ -261,18 +280,42 @@ public class DesignDraftService {
         return relations;
     }
 
+    /**
+     * 외래키 표시를 하고, 가리키는 기본키와 타입을 맞춘다.
+     *
+     * AI 는 상품 번호를 BIGINT 로 만들어 놓고 주문 표의 product_id 는 VARCHAR
+     * 로 적는 일이 잦다. 타입이 다르면 데이터베이스가 외래키를 걸어 주지 않고,
+     * 설계 점검도 REL_TYPE_MISMATCH 오류로 잡아 코드 생성을 막는다. 어느 쪽이
+     * 옳은지는 분명하다 — 가리키는 쪽 기본키가 정답이다.
+     */
     private List<TableV2> markForeignKeys(List<TableV2> tables, List<RelationV2> relations) {
-        Set<String> fkColumnIds = new HashSet<>();
-        relations.forEach(relation -> fkColumnIds.add(relation.fromColumnId()));
+        Map<String, ColumnV2> columnById = new HashMap<>();
+        tables.forEach(table -> table.columns().forEach(column -> columnById.put(column.id(), column)));
+
+        Map<String, ColumnV2> targetByFkColumnId = new HashMap<>();
+        for (RelationV2 relation : relations) {
+            ColumnV2 target = columnById.get(relation.toColumnId());
+            if (target != null) {
+                targetByFkColumnId.put(relation.fromColumnId(), target);
+            }
+        }
 
         List<TableV2> result = new ArrayList<>();
 
         for (TableV2 table : tables) {
             List<ColumnV2> columns = table.columns().stream()
-                    .map(column -> fkColumnIds.contains(column.id())
-                            ? new ColumnV2(column.id(), column.name(), column.type(), column.length(),
-                            column.nullable(), column.isPk(), true, column.defaultValue(), column.comment())
-                            : column)
+                    .map(column -> {
+                        ColumnV2 target = targetByFkColumnId.get(column.id());
+
+                        if (target == null) {
+                            return column;
+                        }
+
+                        return new ColumnV2(column.id(), column.name(),
+                                target.type(), target.length(),
+                                column.nullable(), column.isPk(), true,
+                                column.defaultValue(), column.comment());
+                    })
                     .toList();
 
             result.add(new TableV2(table.id(), table.name(), table.entityName(),
@@ -554,6 +597,91 @@ public class DesignDraftService {
         }
 
         return result;
+    }
+
+    /**
+     * 화면 경로를 점검 규칙이 받아들이는 모양으로 맞춘다.
+     *
+     * AI 는 /products/{id} 처럼 중괄호를 쓰거나 "주문 완료" 같은 한글을
+     * 그대로 넣는다. 프롬프트로 부탁해 두었지만 부탁은 매번 지켜지지 않고,
+     * 점검 규칙은 매번 똑같이 오류로 판정한다. 오류가 하나라도 있으면 코드
+     * 생성이 막히므로, 규칙이 검사하는 것은 여기서 보장한다.
+     */
+    private String safeRoute(String raw, String screenKey, Set<String> used) {
+        String value = raw == null ? "" : raw.trim();
+
+        // 경로를 아예 안 정한 화면은 그대로 둔다. 없는 경로를 지어내면
+        // 팝업이나 외부 화면에 엉뚱한 주소가 붙는다. (경고로만 남는다.)
+        if (value.isEmpty()) {
+            return "";
+        }
+
+        String route = normalizeRoute(value);
+
+        // 살릴 수 없는 경로는 화면 키에서 만든다. scr-order-done → /order-done
+        if (route == null) {
+            route = routeFromKey(screenKey);
+        }
+
+        if (used.add(route.toLowerCase(Locale.ROOT))) {
+            return route;
+        }
+
+        // 같은 경로를 쓰는 화면이 둘이면 뒤엣것은 영원히 열리지 않는다.
+        String fromKey = routeFromKey(screenKey);
+        if (used.add(fromKey.toLowerCase(Locale.ROOT))) {
+            return fromKey;
+        }
+
+        for (int suffix = 2; suffix < 100; suffix++) {
+            String candidate = route + "-" + suffix;
+            if (used.add(candidate.toLowerCase(Locale.ROOT))) {
+                return candidate;
+            }
+        }
+
+        return route;
+    }
+
+    /** 고칠 수 있으면 고치고, 규칙에 맞지 않으면 null. */
+    private String normalizeRoute(String value) {
+        String route = value.replaceAll("\\{([A-Za-z0-9_]+)}", ":$1");
+
+        if (!route.startsWith("/")) {
+            route = "/" + route;
+        }
+
+        route = route.replaceAll("/{2,}", "/");
+
+        if (route.length() > 1 && route.endsWith("/")) {
+            route = route.substring(0, route.length() - 1);
+        }
+
+        return ROUTE.matcher(route).matches() ? route : null;
+    }
+
+    private String routeFromKey(String screenKey) {
+        String key = screenKey == null ? "" : screenKey.trim().toLowerCase(Locale.ROOT);
+        key = key.replaceFirst("^scr[-_]", "").replaceAll("[^a-z0-9\\-_]+", "-");
+        key = key.replaceAll("-{2,}", "-").replaceAll("^-|-$", "");
+
+        return key.isEmpty() ? "/screen" : "/" + key;
+    }
+
+    /**
+     * order, desc 처럼 SQL·자바에서 이미 쓰는 단어는 컬럼 이름으로 쓸 수 없다.
+     *
+     * 목록은 설계 점검 규칙의 것을 그대로 쓴다. 두 곳에 두면 한쪽에만 단어가
+     * 늘어나는 날 초안이 오류를 달고 나온다.
+     */
+    private String safeColumnName(String name) {
+        String key = name.toLowerCase(Locale.ROOT);
+
+        if (!ErdRules.RESERVED.contains(key)) {
+            return name;
+        }
+
+        return RESERVED_RENAMES.getOrDefault(key, key + "_value");
     }
 
     private String normalizeType(String type) {

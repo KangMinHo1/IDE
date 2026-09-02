@@ -28,8 +28,13 @@ public class ErdRules implements DesignRule {
             "JSON", "BLOB"
     );
 
-    /** SQL 이나 자바에서 이름으로 쓰면 문제가 되는 단어들. */
-    private static final Set<String> RESERVED = Set.of(
+    /**
+     * SQL 이나 자바에서 이름으로 쓰면 문제가 되는 단어들.
+     *
+     * AI 초안 후처리도 이 목록을 그대로 쓴다. 목록을 두 곳에 두면 한쪽에만
+     * 단어가 늘어나는 날 초안이 곧바로 오류를 달고 나온다.
+     */
+    public static final Set<String> RESERVED = Set.of(
             "order", "group", "select", "from", "where", "table", "index", "key", "desc", "asc",
             "class", "public", "private", "static", "int", "long", "new", "return", "package"
     );
