@@ -8,6 +8,7 @@ import com.myide.backend.dto.design.codegen.CodegenFileStatus;
 import com.myide.backend.dto.design.codegen.CodegenFileView;
 import com.myide.backend.dto.design.codegen.CodegenPreviewRequest;
 import com.myide.backend.dto.design.codegen.CodegenPreviewResponse;
+import com.myide.backend.dto.design.codegen.CodegenTargetsResponse;
 import com.myide.backend.dto.design.codegen.GeneratedFile;
 import com.myide.backend.dto.design.v2.DesignModelV2;
 import com.myide.backend.dto.ide.FileRequest;
@@ -50,6 +51,28 @@ public class DesignCodegenService {
     private final DesignDoctorService doctorService;
     private final ProjectStackDetector stackDetector;
     private final FileService fileService;
+
+    /**
+     * 고를 수 있는 작업 폴더와, 고른 곳이 무엇인지 알려 준다.
+     *
+     * 미리보기를 누르기 전에 "여기는 Spring Boot 이고 패키지는 이것"이 보여야
+     * 한다. 패키지를 잘못 짚으면 자바 파일이 한 개도 컴파일되지 않는데,
+     * 그 사실을 코드가 다 만들어진 뒤에 알면 늦다.
+     */
+    public CodegenTargetsResponse targets(String workspaceId, String projectName,
+                                          String branchName) {
+        List<String> branches = stackDetector.listBranches(workspaceId, projectName);
+
+        String branch = branchName == null || branchName.isBlank()
+                ? branches.stream().findFirst().orElse("master")
+                : branchName;
+
+        ProjectStackDetector.Detected detected =
+                stackDetector.detect(workspaceId, projectName, branch);
+
+        return new CodegenTargetsResponse(branches, detected.stack().name(),
+                detected.stack().label(), detected.basePackage(), detected.note());
+    }
 
     public CodegenPreviewResponse preview(String workspaceId, CodegenPreviewRequest request) {
         DesignModelV2 model = requireModel(request.model());

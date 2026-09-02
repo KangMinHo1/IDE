@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -31,12 +32,52 @@ public class ProjectStackDetector {
     private static final Pattern MAVEN_GROUP =
             Pattern.compile("<groupId>([A-Za-z0-9_.]+)</groupId>");
 
+    /** 패키지가 아니라 계층을 나타내는 폴더 이름. 여기까지 내려가면 안 된다. */
+    private static final Set<String> LAYER_FOLDERS = Set.of(
+            "domain", "entity", "model", "controller", "service", "repository", "dto",
+            "config", "security", "util", "utils", "common", "handler", "mapper",
+            "exception", "web", "api");
+
     private final WorkspaceService workspaceService;
 
     /**
      * @param note 사람에게 보여 줄 한 줄. 왜 이렇게 판단했는지 적는다.
      */
     public record Detected(ProjectStack stack, String basePackage, String note) {
+    }
+
+    /**
+     * 프로젝트 아래에 실제로 있는 작업 폴더를 브랜치 이름으로 돌려준다.
+     *
+     * git 이 아는 브랜치 목록을 쓰지 않는 이유가 있다. 파일이 쓰이는 곳은
+     * git 이 아니라 디스크의 폴더이고, git 을 아직 안 쓰는 프로젝트에는
+     * 브랜치 목록 자체가 없다. 폴더를 보면 둘 다 해결된다.
+     */
+    public List<String> listBranches(String workspaceId, String projectName) {
+        Path root;
+
+        try {
+            root = workspaceService.getProjectRootPath(workspaceId, projectName);
+        } catch (Exception e) {
+            return List.of();
+        }
+
+        if (!Files.isDirectory(root)) {
+            return List.of();
+        }
+
+        try (Stream<Path> stream = Files.list(root)) {
+            return stream
+                    .filter(Files::isDirectory)
+                    .map(path -> path.getFileName().toString())
+                    .filter(name -> !name.startsWith("."))
+                    .map(workspaceService::toBranchNameFromFolderName)
+                    .sorted()
+                    .toList();
+        } catch (Exception e) {
+            log.debug("작업 폴더를 읽지 못했습니다: {}", root);
+            return List.of();
+        }
     }
 
     public Detected detect(String workspaceId, String projectName, String branchName) {
@@ -84,10 +125,11 @@ public class ProjectStackDetector {
     }
 
     /**
-     * src/main/java 아래로 폴더가 하나뿐인 동안 계속 내려간다.
+     * 기본 패키지를 찾는다.
      *
-     * com/example/demo 처럼 갈래가 없는 구간이 곧 기본 패키지다. 갈래가
-     * 생기거나 자바 파일이 나오면 거기서 멈춘다.
+     * 가장 확실한 단서는 XxxApplication.java 다. 스프링이 컴포넌트를 찾는
+     * 기준이 바로 그 파일이 있는 패키지이므로, 그것이 곧 기본 패키지다.
+     * 없으면 폴더가 하나뿐인 구간을 따라 내려간다.
      */
     private String findBasePackage(Path root) {
         Path javaRoot = root.resolve("src/main/java");
@@ -96,6 +138,38 @@ public class ProjectStackDetector {
             return fromBuildFile(root);
         }
 
+        String fromApplication = findApplicationPackage(javaRoot);
+        if (!fromApplication.isBlank()) {
+            return fromApplication;
+        }
+
+        String walked = walkSingleChain(javaRoot);
+        return walked.isBlank() ? fromBuildFile(root) : walked;
+    }
+
+    /** XxxApplication.java 가 있는 폴더가 곧 기본 패키지다. */
+    private String findApplicationPackage(Path javaRoot) {
+        try (Stream<Path> stream = Files.walk(javaRoot, 12)) {
+            return stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith("Application.java"))
+                    .findFirst()
+                    .map(path -> javaRoot.relativize(path.getParent()).toString()
+                            .replace('\\', '/').replace('/', '.'))
+                    .orElse("");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * 폴더가 하나뿐인 동안 내려가되, 계층 폴더를 만나면 멈춘다.
+     *
+     * domain 하나만 만들어 둔 프로젝트에서 그냥 내려가면 domain 까지 패키지로
+     * 삼아, 코드가 domain/domain/User.java 처럼 한 겹 더 깊이 들어간다.
+     * 실제로 겪은 문제라 이름으로 걸러 낸다.
+     */
+    private String walkSingleChain(Path javaRoot) {
         Path current = javaRoot;
         StringBuilder parts = new StringBuilder();
 
@@ -116,15 +190,19 @@ public class ProjectStackDetector {
                 break;
             }
 
-            current = directories.get(0);
+            Path next = directories.get(0);
+            if (LAYER_FOLDERS.contains(next.getFileName().toString().toLowerCase())) {
+                break;
+            }
+
+            current = next;
             if (!parts.isEmpty()) {
                 parts.append(".");
             }
             parts.append(current.getFileName().toString());
         }
 
-        String detected = parts.toString();
-        return detected.isBlank() ? fromBuildFile(root) : detected;
+        return parts.toString();
     }
 
     private String fromBuildFile(Path root) {

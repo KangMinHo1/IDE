@@ -4,15 +4,18 @@ import com.myide.backend.dto.design.codegen.CodegenApplyRequest;
 import com.myide.backend.dto.design.codegen.CodegenApplyResponse;
 import com.myide.backend.dto.design.codegen.CodegenPreviewRequest;
 import com.myide.backend.dto.design.codegen.CodegenPreviewResponse;
+import com.myide.backend.dto.design.codegen.CodegenTargetsResponse;
 import com.myide.backend.security.WorkspaceAccessGuard;
 import com.myide.backend.service.design.codegen.DesignCodegenService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -29,6 +32,19 @@ public class DesignCodegenController {
 
     private final DesignCodegenService codegenService;
     private final WorkspaceAccessGuard accessGuard;
+
+    @GetMapping("/targets")
+    public CodegenTargetsResponse targets(
+            @PathVariable String workspaceId,
+            @AuthenticationPrincipal Long userId,
+            @RequestParam String projectName,
+            @RequestParam(required = false) String branchName
+    ) {
+        accessGuard.requireAccess(workspaceId, userId);
+        requireProject(projectName);
+
+        return codegenService.targets(workspaceId, projectName, branchName);
+    }
 
     @PostMapping("/preview")
     public CodegenPreviewResponse preview(
