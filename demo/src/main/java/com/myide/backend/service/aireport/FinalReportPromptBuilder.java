@@ -37,6 +37,14 @@ public class FinalReportPromptBuilder {
     }
 
     public String buildInput(String workspaceId, FinalReportDraftRequest request) {
+        return buildInput(workspaceId, request, null);
+    }
+
+    /**
+     * @param designText 서버가 저장된 설계에서 만든 글. null 이면 요청에 담겨 온 값을 쓴다.
+     */
+    public String buildInput(String workspaceId, FinalReportDraftRequest request,
+                             String designText) {
         FinalReportDraftRequest.ProjectInfo project = request.getProject();
 
         return """
@@ -58,16 +66,6 @@ public class FinalReportPromptBuilder {
                 [개발일지 목록]
                 %s
 
-                [요구사항 정의]
-                %s
-
-                [API 명세]
-                %s
-
-                [ERD]
-                %s
-
-                [데이터 플로우]
                 %s
 
                 [작성 요청]
@@ -85,6 +83,29 @@ public class FinalReportPromptBuilder {
                 safeNumber(project.getScheduleTotalCount()),
                 safeNumber(project.getDevlogCount()),
                 buildDevlogText(request.getDevlogs()),
+                designText != null ? designText : buildLegacyDesignText(request)
+        );
+    }
+
+    /**
+     * 저장된 설계가 아직 없을 때만 쓰는 길.
+     *
+     * 새 설계 화면을 한 번도 열지 않은 워크스페이스가 있으므로 남겨 둔다.
+     * 이 경우에는 설계 점검 결과와 추적성을 넣을 수 없다.
+     */
+    private String buildLegacyDesignText(FinalReportDraftRequest request) {
+        return """
+                [요구사항 정의]
+                %s
+
+                [API 명세]
+                %s
+
+                [ERD]
+                %s
+
+                [데이터 플로우]
+                %s""".formatted(
                 buildRequirementText(request.getRequirements()),
                 buildApiSpecText(request.getApiSpecs()),
                 buildErdText(request.getErdTables()),
