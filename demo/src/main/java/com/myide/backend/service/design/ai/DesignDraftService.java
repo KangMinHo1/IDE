@@ -62,9 +62,10 @@ public class DesignDraftService {
 
     // ── 1단계 ───────────────────────────────────────────────────────
 
-    public DesignModelV2 generateSkeleton(String summary, TechStackV2 stack, String instruction) {
+    public DesignModelV2 generateSkeleton(String summary, TechStackV2 stack, String instruction,
+                                          DesignModelV2 existing) {
         String prompt = DesignDraftPrompts.skeletonPrompt(
-                summary, stack.backend(), stack.frontend(), stack.db(), instruction);
+                summary, stack.backend(), stack.frontend(), stack.db(), instruction, existing);
 
         JsonNode root = call(prompt, DesignDraftPrompts.skeletonSchema(), SKELETON_MAX_TOKENS);
 
@@ -103,7 +104,9 @@ public class DesignDraftService {
             ));
         }
 
-        Set<String> usedRoutes = new HashSet<>();
+        // 이미 문서에 있는 경로를 먼저 채워 둔다. 그래야 새로 만드는 화면이
+        // 기존 화면과 같은 경로를 쓰지 않는다.
+        Set<String> usedRoutes = existingRoutes(existing);
 
         for (JsonNode item : root.path("screens")) {
             String screenKey = item.path("key").asText("");
@@ -156,17 +159,26 @@ public class DesignDraftService {
 
     // ── 2단계 ───────────────────────────────────────────────────────
 
-    public DesignModelV2 generateDetail(DesignModelV2 skeleton, String instruction) {
+    public DesignModelV2 generateDetail(DesignModelV2 skeleton, String instruction,
+                                        DesignModelV2 existing) {
         TechStackV2 stack = skeleton.meta().techStack();
 
         String prompt = DesignDraftPrompts.detailPrompt(
-                skeleton, stack.backend(), stack.db(), instruction);
+                skeleton, stack.backend(), stack.db(), instruction, existing);
 
         JsonNode root = call(prompt, DesignDraftPrompts.detailSchema(), DETAIL_MAX_TOKENS);
 
         Map<String, String> tableIdByName = new LinkedHashMap<>();
         Map<String, Map<String, String>> columnIdByTableAndName = new HashMap<>();
         List<TableV2> tables = new ArrayList<>();
+
+        // 이미 있는 표 이름을 미리 넣어 둔다. 같은 이름의 표가 둘이면
+        // 설계 점검이 TBL_DUP_NAME 오류로 잡아 코드 생성이 막힌다.
+        // 값은 쓰이지 않으므로 자리만 채운다.
+        if (existing != null) {
+            existing.erd().tables().forEach(table ->
+                    tableIdByName.put(table.name().toLowerCase(Locale.ROOT), table.id()));
+        }
 
         for (JsonNode item : root.path("tables")) {
             String name = text(item, "name", "").trim();
@@ -535,6 +547,33 @@ public class DesignDraftService {
             return objectMapper.readTree(stripFence(raw));
         } catch (Exception e) {
             log.warn("⚠️ [AI] 초안 응답을 해석하지 못했습니다: {}", e.getMessage());
+            return repair(raw, e.getMessage(), schema, maxTokens);
+        }
+    }
+
+    /**
+     * 깨진 응답을 한 번만 고쳐 달라고 다시 부른다.
+     *
+     * 구조화 출력을 켜 두었어도 응답이 잘리거나 앞뒤에 설명이 붙어 오는 일이
+     * 있다. 사용자에게 "다시 시도해 주세요"라고 돌려보내면 처음부터 20초를
+     * 더 기다려야 하는데, 고쳐 달라고 부르는 쪽이 훨씬 빠르고 잘 듣는다.
+     *
+     * 두 번 이상은 부르지 않는다. 응답 시간만 늘고 성공률은 거의 오르지 않는다.
+     */
+    private JsonNode repair(String raw, String parseError, Map<String, Object> schema,
+                            int maxTokens) {
+        String prompt = DesignDraftPrompts.repairPrompt(raw, parseError);
+
+        try {
+            String fixed = gemini.generate(prompt,
+                    GeminiHttpClient.GenerationOptions.json(maxTokens, schema));
+
+            JsonNode parsed = objectMapper.readTree(stripFence(fixed));
+            log.info("✅ [AI] 깨진 응답을 한 번 고쳐서 살렸습니다.");
+
+            return parsed;
+        } catch (Exception e) {
+            log.warn("⚠️ [AI] 고쳐 달라고 다시 불렀지만 실패했습니다: {}", e.getMessage());
             throw new ResponseStatusException(HttpStatus.UNPROCESSABLE_ENTITY,
                     "AI 응답을 해석하지 못했습니다. 다시 시도해 주세요.");
         }
@@ -601,6 +640,20 @@ public class DesignDraftService {
     /** order, desc 처럼 SQL·자바에서 이미 쓰는 단어는 컬럼 이름으로 쓸 수 없다. */
     private String safeColumnName(String name) {
         return DesignRepairs.renameReservedColumn(name);
+    }
+
+    /** 이미 문서에 있는 화면 경로. 새 화면이 이것과 겹치지 않게 한다. */
+    private Set<String> existingRoutes(DesignModelV2 existing) {
+        Set<String> routes = new HashSet<>();
+
+        if (existing != null) {
+            existing.screens().stream()
+                    .map(screen -> screen.key().trim().toLowerCase(Locale.ROOT))
+                    .filter(route -> !route.isEmpty())
+                    .forEach(routes::add);
+        }
+
+        return routes;
     }
 
     private String normalizeType(String type) {

@@ -58,7 +58,7 @@ class DesignDraftServiceTest {
                 }
                 """);
 
-        DesignModelV2 model = service.generateSkeleton("중고 거래", stack(), null);
+        DesignModelV2 model = service.generateSkeleton("중고 거래", stack(), null, null);
 
         assertThat(model.requirements()).hasSize(1);
         assertThat(model.requirements().get(0).id()).startsWith("req_");
@@ -95,7 +95,7 @@ class DesignDraftServiceTest {
                 }
                 """);
 
-        DesignModelV2 model = service.generateSkeleton("무언가", stack(), null);
+        DesignModelV2 model = service.generateSkeleton("무언가", stack(), null, null);
 
         assertThat(model.screens().get(0).isEntry()).isTrue();
     }
@@ -121,7 +121,7 @@ class DesignDraftServiceTest {
                 }
                 """);
 
-        DesignModelV2 model = service.generateDetail(skeleton(), null);
+        DesignModelV2 model = service.generateDetail(skeleton(), null, null);
         TableV2 products = model.erd().tables().get(0);
 
         // 기본키가 없으면 코드 생성이 아예 막히므로 앞에 붙여 준다.
@@ -153,7 +153,7 @@ class DesignDraftServiceTest {
                 }
                 """);
 
-        DesignModelV2 model = service.generateDetail(skeleton(), null);
+        DesignModelV2 model = service.generateDetail(skeleton(), null, null);
 
         assertThat(model.apis().get(0).requirementIds()).containsExactly("req_keep");
         assertThat(model.apis().get(0).screenIds()).isEmpty();
@@ -178,7 +178,7 @@ class DesignDraftServiceTest {
                 }
                 """);
 
-        DesignModelV2 model = service.generateDetail(skeleton(), null);
+        DesignModelV2 model = service.generateDetail(skeleton(), null, null);
 
         assertThat(model.apis()).hasSize(1);
         assertThat(model.apis().get(0).description()).isEqualTo("첫 번째");
@@ -206,7 +206,7 @@ class DesignDraftServiceTest {
                 }
                 """);
 
-        DesignModelV2 model = service.generateDetail(skeleton(), null);
+        DesignModelV2 model = service.generateDetail(skeleton(), null, null);
 
         assertThat(model.erd().relations()).hasSize(1);
 
@@ -228,7 +228,7 @@ class DesignDraftServiceTest {
         Mockito.when(gemini.generate(Mockito.anyString(), Mockito.any()))
                 .thenThrow(new GeminiHttpClient.ResponseTruncatedException("잘림"));
 
-        assertThat(catchMessage(() -> service.generateSkeleton("무언가", stack(), null)))
+        assertThat(catchMessage(() -> service.generateSkeleton("무언가", stack(), null, null)))
                 .contains("너무 길어");
     }
 
@@ -238,7 +238,7 @@ class DesignDraftServiceTest {
         Mockito.when(gemini.generate(Mockito.anyString(), Mockito.any()))
                 .thenThrow(new GeminiHttpClient.GeminiUnavailableException("없음"));
 
-        assertThat(catchMessage(() -> service.generateSkeleton("무언가", stack(), null)))
+        assertThat(catchMessage(() -> service.generateSkeleton("무언가", stack(), null, null)))
                 .contains("AI를 쓸 수 없습니다");
     }
 
@@ -248,7 +248,7 @@ class DesignDraftServiceTest {
         Mockito.when(gemini.generate(Mockito.anyString(), Mockito.any()))
                 .thenThrow(new GeminiHttpClient.GeminiConfigException("키가 유효하지 않습니다"));
 
-        String message = catchMessage(() -> service.generateSkeleton("무언가", stack(), null));
+        String message = catchMessage(() -> service.generateSkeleton("무언가", stack(), null, null));
 
         assertThat(message).contains("AI 설정에 문제가 있어");
         assertThat(message).doesNotContain("잠시 후");

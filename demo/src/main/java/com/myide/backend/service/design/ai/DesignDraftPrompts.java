@@ -3,6 +3,7 @@ package com.myide.backend.service.design.ai;
 import com.myide.backend.dto.design.v2.DesignModelV2;
 import com.myide.backend.dto.design.v2.RequirementV2;
 import com.myide.backend.dto.design.v2.ScreenV2;
+import com.myide.backend.dto.design.v2.TableV2;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -31,7 +32,7 @@ public final class DesignDraftPrompts {
     // ── 1단계: 요구사항 + 화면 + 화면 이동 ──────────────────────────
 
     public static String skeletonPrompt(String summary, String backend, String frontend,
-                                        String db, String instruction) {
+                                        String db, String instruction, DesignModelV2 existing) {
         StringBuilder builder = new StringBuilder();
 
         builder.append("당신은 학생 팀의 프로젝트 설계를 돕는 선배 개발자입니다.\n");
@@ -46,10 +47,12 @@ public final class DesignDraftPrompts {
             builder.append("추가 요청: ").append(instruction).append("\n");
         }
 
+        appendExisting(builder, existing);
+
         builder.append("""
 
                 지켜야 할 것:
-                - 요구사항은 8개에서 14개 사이로, 실제로 만들 수 있는 크기로 나눠 주세요.
+                - 요구사항은 8개에서 14개 사이로, 실제로 만들 수 있는 크기로 나눠 주세요. (이미 있는 것을 알려 준 경우에는 그보다 적어도 됩니다.)
                 - 화면은 5개에서 9개 사이로 만들고, 사용자가 처음 보는 화면 하나만 isEntry를 true로 하세요.
                 - 모든 화면은 requirementKeys에 최소 하나의 요구사항 키를 넣어야 합니다. 왜 필요한 화면인지 근거가 있어야 합니다.
                 - 모든 요구사항은 screenKeys에 최소 하나의 화면 키를 넣어야 합니다.
@@ -101,7 +104,7 @@ public final class DesignDraftPrompts {
     // ── 2단계: 테이블 + 관계 + API ──────────────────────────────────
 
     public static String detailPrompt(DesignModelV2 skeleton, String backend, String db,
-                                      String instruction) {
+                                      String instruction, DesignModelV2 existing) {
         StringBuilder builder = new StringBuilder();
 
         builder.append("아래는 방금 정리한 요구사항과 화면입니다. 이것을 그대로 두고, 이제 데이터베이스 표와 API를 설계해 주세요.\n\n");
@@ -126,6 +129,8 @@ public final class DesignDraftPrompts {
             builder.append("추가 요청: ").append(instruction).append("\n");
         }
 
+        appendExisting(builder, existing);
+
         builder.append("""
 
                 지켜야 할 것:
@@ -144,6 +149,78 @@ public final class DesignDraftPrompts {
                 """.formatted(ALLOWED_TYPES));
 
         return builder.toString();
+    }
+
+    /**
+     * 이미 있는 것을 알려 준다.
+     *
+     * 이 말이 없으면 AI 는 빈 문서에 처음부터 만드는 줄 알고, 이미 있는
+     * 요구사항과 화면을 다시 내놓는다. 그러면 같은 경로를 쓰는 화면이 생겨
+     * 설계 점검 오류가 붙고 코드 생성이 막힌다.
+     */
+    private static void appendExisting(StringBuilder builder, DesignModelV2 existing) {
+        if (existing == null) {
+            return;
+        }
+
+        List<String> requirements = existing.requirements().stream()
+                .map(RequirementV2::name)
+                .filter(name -> !name.isBlank())
+                .toList();
+
+        List<String> screens = existing.screens().stream()
+                .map(screen -> screen.key().isBlank()
+                        ? screen.name()
+                        : screen.name() + " (" + screen.key() + ")")
+                .filter(name -> !name.isBlank())
+                .toList();
+
+        List<String> tables = existing.erd().tables().stream()
+                .map(TableV2::name)
+                .filter(name -> !name.isBlank())
+                .toList();
+
+        if (requirements.isEmpty() && screens.isEmpty() && tables.isEmpty()) {
+            return;
+        }
+
+        builder.append("\n이미 문서에 있는 것 (다시 만들지 마세요):\n");
+
+        if (!requirements.isEmpty()) {
+            builder.append("- 요구사항: ").append(String.join(", ", requirements)).append("\n");
+        }
+        if (!screens.isEmpty()) {
+            builder.append("- 화면: ").append(String.join(", ", screens)).append("\n");
+        }
+        if (!tables.isEmpty()) {
+            builder.append("- 표: ").append(String.join(", ", tables)).append("\n");
+        }
+
+        builder.append("위와 겹치지 않는 새 항목만 내세요. 경로도 겹치면 안 됩니다.\n");
+    }
+
+    /**
+     * 깨진 응답을 고쳐 달라고 부탁하는 말.
+     *
+     * 처음부터 다시 만들게 하지 않는다. 이미 나온 내용을 살리는 편이 빠르고,
+     * 사용자가 적어 넣은 설명과 어긋날 일도 없다.
+     */
+    public static String repairPrompt(String raw, String parseError) {
+        return """
+                아래 JSON 이 형식에 맞지 않아 읽을 수 없다.
+
+                [읽으려다 난 오류]
+                %s
+
+                [원본]
+                %s
+
+                [해야 할 일]
+                내용은 최대한 그대로 두고 형식만 고쳐서, 스키마에 맞는 JSON 하나만 출력해라.
+                설명이나 코드 울타리를 붙이지 마라. 잘려 있으면 뒤를 자연스럽게 마무리해라.
+                """.formatted(
+                parseError == null ? "형식 오류" : parseError,
+                raw == null ? "" : raw);
     }
 
     public static Map<String, Object> detailSchema() {

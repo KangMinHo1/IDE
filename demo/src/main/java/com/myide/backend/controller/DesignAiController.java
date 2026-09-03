@@ -51,7 +51,7 @@ public class DesignAiController {
                 : request.techStack();
 
         DesignModelV2 model = draftService.generateSkeleton(
-                request.summary(), stack, request.instruction());
+                request.summary(), stack, request.instruction(), request.existing());
 
         return new DesignDraftResponse(model, doctorService.inspect(model));
     }
@@ -72,7 +72,8 @@ public class DesignAiController {
                     "1단계 결과가 없습니다. 처음부터 다시 시도해 주세요.");
         }
 
-        DesignModelV2 model = draftService.generateDetail(request.skeleton(), request.instruction());
+        DesignModelV2 model = draftService.generateDetail(
+                request.skeleton(), request.instruction(), request.existing());
 
         return new DesignDraftResponse(model, doctorService.inspect(model));
     }

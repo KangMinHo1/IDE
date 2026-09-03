@@ -60,7 +60,7 @@ class AiDraftPassesDoctorTest {
     @DisplayName("험한 응답을 받아도 초안에 코드 생성을 막는 오류가 남지 않는다")
     void draftHasNoBlockingErrors() {
         Mockito.when(gemini.generate(Mockito.anyString(), Mockito.any())).thenReturn(SKELETON);
-        DesignModelV2 skeleton = service.generateSkeleton("중고 거래", stack(), null);
+        DesignModelV2 skeleton = service.generateSkeleton("중고 거래", stack(), null, null);
 
         // 2단계 응답은 1단계에서 정해진 진짜 id를 그대로 되받아 적는다.
         // 실제 호출도 그렇게 도는데, 지어낸 id를 쓰면 연결이 전부 버려져
@@ -68,7 +68,7 @@ class AiDraftPassesDoctorTest {
         Mockito.when(gemini.generate(Mockito.anyString(), Mockito.any()))
                 .thenReturn(detailFor(skeleton));
 
-        DesignModelV2 model = service.generateDetail(skeleton, null);
+        DesignModelV2 model = service.generateDetail(skeleton, null, null);
 
         DoctorReport report = doctor.inspect(model);
 
@@ -86,11 +86,11 @@ class AiDraftPassesDoctorTest {
     @DisplayName("고칠 때 뜻이 통하게 고친다")
     void repairsAreReadable() {
         Mockito.when(gemini.generate(Mockito.anyString(), Mockito.any())).thenReturn(SKELETON);
-        DesignModelV2 skeleton = service.generateSkeleton("중고 거래", stack(), null);
+        DesignModelV2 skeleton = service.generateSkeleton("중고 거래", stack(), null, null);
 
         Mockito.when(gemini.generate(Mockito.anyString(), Mockito.any()))
                 .thenReturn(detailFor(skeleton));
-        DesignModelV2 model = service.generateDetail(skeleton, null);
+        DesignModelV2 model = service.generateDetail(skeleton, null, null);
 
         List<String> routes = model.screens().stream().map(ScreenV2::key).toList();
 
