@@ -60,6 +60,15 @@ public class DesignSnapshotService {
      */
     private static final double SHRINK_CHECKPOINT_RATIO = 0.5;
 
+    /**
+     * 워크스페이스마다 남겨 두는 기록의 개수.
+     *
+     * AI 초안과 코드 생성을 적용할 때마다 자동으로 하나씩 쌓이고 문서 전체를
+     * 통째로 담으므로, 상한이 없으면 조용히 계속 커진다. 되돌리기는 최근
+     * 것으로 하게 되어 있어 오래된 기록까지 들고 있을 이유가 없다.
+     */
+    private static final int MAX_CHECKPOINTS = 20;
+
     private final DesignDocSnapshotRepository snapshotRepository;
     private final DesignDocCheckpointRepository checkpointRepository;
     private final DesignDocumentRepository designDocumentRepository;
@@ -185,7 +194,21 @@ public class DesignSnapshotService {
                 .createdBy(getUser(userId))
                 .build());
 
+        trimOldCheckpoints(workspaceId);
+
         return DesignCheckpointResponse.from(checkpoint);
+    }
+
+    /** 최근 것만 남기고 오래된 기록은 지운다. 문서 전체를 담고 있어 계속 쌓이면 무겁다. */
+    private void trimOldCheckpoints(String workspaceId) {
+        List<DesignDocCheckpoint> all =
+                checkpointRepository.findByWorkspace_UuidOrderByCreatedAtDesc(workspaceId);
+
+        if (all.size() <= MAX_CHECKPOINTS) {
+            return;
+        }
+
+        checkpointRepository.deleteAll(all.subList(MAX_CHECKPOINTS, all.size()));
     }
 
     public List<DesignCheckpointResponse> listCheckpoints(String workspaceId, Long userId) {
