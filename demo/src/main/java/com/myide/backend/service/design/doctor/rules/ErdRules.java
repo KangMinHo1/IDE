@@ -6,7 +6,9 @@ import com.myide.backend.dto.design.v2.RelationV2;
 import com.myide.backend.dto.design.v2.TableV2;
 import com.myide.backend.service.design.doctor.DesignIndex;
 import com.myide.backend.service.design.doctor.DesignRule;
+import com.myide.backend.service.design.DesignRepairs;
 import com.myide.backend.service.design.doctor.Finding;
+import com.myide.backend.service.design.doctor.Fix;
 import com.myide.backend.service.design.doctor.Severity;
 import org.springframework.stereotype.Component;
 
@@ -86,7 +88,8 @@ public class ErdRules implements DesignRule {
                 findings.add(Finding.of("TBL_NO_PK", Severity.ERROR,
                         "table", table.id(), label,
                         "기본키가 없습니다.",
-                        "기본키가 없으면 Entity 코드를 만들 수 없습니다. id 컬럼에 pk 를 붙여 주세요."));
+                        "기본키가 없으면 Entity 코드를 만들 수 없습니다. id 컬럼에 pk 를 붙여 주세요."
+                ).withFix(Fix.addPrimaryKey(table.id())));
             }
 
             if (!index.isTableUsedByApi(table.id())) {
@@ -138,13 +141,17 @@ public class ErdRules implements DesignRule {
                 findings.add(Finding.of("COL_RESERVED_WORD", Severity.ERROR,
                         "table", table.id(), label,
                         "예약어라 컬럼 이름으로 쓸 수 없습니다: " + column.name(),
-                        "뒤에 단어를 붙여 order_no 처럼 바꿔 주세요."));
+                        "뒤에 단어를 붙여 order_no 처럼 바꿔 주세요."
+                ).withFix(Fix.renameColumn(table.id(), column.id(),
+                        DesignRepairs.renameReservedColumn(column.name()))));
             }
 
             if (!key.equals(column.name()) || column.name().contains("-")) {
                 findings.add(Finding.of("COL_NAMING", Severity.INFO,
                         "table", table.id(), label,
-                        "컬럼 이름은 소문자와 밑줄로 쓰는 것이 일반적입니다."));
+                        "컬럼 이름은 소문자와 밑줄로 쓰는 것이 일반적입니다."
+                ).withFix(Fix.renameColumn(table.id(), column.id(),
+                        DesignRepairs.toSnakeCase(column.name()))));
             }
         }
     }
@@ -160,7 +167,8 @@ public class ErdRules implements DesignRule {
                 findings.add(Finding.of("REL_DANGLING", Severity.ERROR,
                         "relation", relation.id(), label,
                         "존재하지 않는 테이블을 잇는 관계가 있습니다.",
-                        "이 관계를 지우거나 대상 테이블을 다시 만들어 주세요."));
+                        "이 관계를 지우거나 대상 테이블을 다시 만들어 주세요."
+                ).withFix(Fix.deleteRelation(relation.id())));
                 continue;
             }
 
@@ -180,7 +188,10 @@ public class ErdRules implements DesignRule {
                         "relation", relation.id(), label,
                         "이어진 두 컬럼의 타입이 다릅니다: "
                                 + fromColumn.type() + " 와 " + toColumn.type(),
-                        "외래키는 가리키는 기본키와 같은 타입이어야 합니다."));
+                        "외래키는 가리키는 기본키와 같은 타입이어야 합니다."
+                ).withFix(Fix.alignForeignKeyType(
+                        index.tableIdOfColumn(relation.fromColumnId()),
+                        fromColumn.id(), toColumn.type(), toColumn.length())));
             }
 
             if ("N:M".equals(relation.cardinality())) {

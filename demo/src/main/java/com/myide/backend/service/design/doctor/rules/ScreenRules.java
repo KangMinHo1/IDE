@@ -5,15 +5,19 @@ import com.myide.backend.dto.design.v2.ScreenTransitionV2;
 import com.myide.backend.dto.design.v2.ScreenV2;
 import com.myide.backend.service.design.doctor.DesignIndex;
 import com.myide.backend.service.design.doctor.DesignRule;
+import com.myide.backend.service.design.DesignRepairs;
 import com.myide.backend.service.design.doctor.Finding;
+import com.myide.backend.service.design.doctor.Fix;
 import com.myide.backend.service.design.doctor.Severity;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 
 @Component
@@ -48,6 +52,10 @@ public class ScreenRules implements DesignRule {
                 || model.apis().stream()
                 .anyMatch(api -> api.endpoint().toLowerCase(Locale.ROOT).contains("login"));
 
+        // 고칠 경로를 정할 때 이미 쓰이는 것과 겹치면 안 된다. 먼저 나온
+        // 화면이 그 경로를 가져가고, 뒤엣것에만 다른 경로를 제안한다.
+        Set<String> claimedRoutes = new HashSet<>();
+
         for (ScreenV2 screen : model.screens()) {
             String label = screen.name().isBlank() ? screen.key() : screen.name();
 
@@ -62,14 +70,25 @@ public class ScreenRules implements DesignRule {
                 findings.add(Finding.of("SCR_INVALID_ROUTE", Severity.ERROR,
                         "screen", screen.id(), label,
                         "라우트 경로 형식이 올바르지 않습니다: " + screen.key(),
-                        "슬래시로 시작하고 공백이나 한글이 없어야 합니다."));
+                        "슬래시로 시작하고 공백이나 한글이 없어야 합니다."
+                ).withFix(Fix.setScreenRoute(screen.id(),
+                        DesignRepairs.uniqueRoute(screen.key(), label, claimedRoutes))));
             }
 
             String routeKey = screen.key().trim().toLowerCase(Locale.ROOT);
             if (!routeKey.isEmpty() && routeCount.getOrDefault(routeKey, 0) > 1) {
-                findings.add(Finding.of("SCR_DUP_ROUTE", Severity.ERROR,
+                Finding dup = Finding.of("SCR_DUP_ROUTE", Severity.ERROR,
                         "screen", screen.id(), label,
-                        "같은 라우트 경로를 쓰는 화면이 또 있습니다: " + screen.key()));
+                        "같은 라우트 경로를 쓰는 화면이 또 있습니다: " + screen.key());
+
+                // 먼저 나온 화면은 그대로 두고 뒤엣것만 옮긴다. 둘 다 옮기면
+                // 사용자가 기억하던 경로가 아무 이유 없이 사라진다.
+                findings.add(claimedRoutes.add(routeKey)
+                        ? dup
+                        : dup.withFix(Fix.setScreenRoute(screen.id(),
+                                DesignRepairs.uniqueRoute(screen.key(), label, claimedRoutes))));
+            } else if (!routeKey.isEmpty()) {
+                claimedRoutes.add(routeKey);
             }
 
             if (!screen.isEntry() && !index.isScreenReachable(screen.id())) {
@@ -105,7 +124,8 @@ public class ScreenRules implements DesignRule {
                 findings.add(Finding.of("TRN_DANGLING", Severity.ERROR,
                         "transition", transition.id(), "화면 이동",
                         "존재하지 않는 화면을 잇는 흐름이 있습니다.",
-                        "이 화살표를 지워 주세요."));
+                        "이 화살표를 지워 주세요."
+                ).withFix(Fix.deleteTransition(transition.id())));
                 continue;
             }
 

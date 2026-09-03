@@ -15,7 +15,7 @@ import com.myide.backend.dto.design.v2.ScreenV2;
 import com.myide.backend.dto.design.v2.TableV2;
 import com.myide.backend.dto.design.v2.TechStackV2;
 import com.myide.backend.service.ai.GeminiHttpClient;
-import com.myide.backend.service.design.doctor.rules.ErdRules;
+import com.myide.backend.service.design.DesignRepairs;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -30,7 +30,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import java.util.regex.Pattern;
 import java.util.UUID;
 
 /**
@@ -47,20 +46,6 @@ public class DesignDraftService {
 
     private static final int SKELETON_MAX_TOKENS = 16384;
     private static final int DETAIL_MAX_TOKENS = 32768;
-
-    /** 설계 점검(SCR_INVALID_ROUTE)이 받아들이는 경로 형식. */
-    private static final Pattern ROUTE = Pattern.compile("^/[A-Za-z0-9\\-_/:\\[\\]]*$");
-
-    /** 예약어를 사람이 읽기 좋은 이름으로 바꾼다. 목록에 없으면 뒤에 _value 를 붙인다. */
-    private static final Map<String, String> RESERVED_RENAMES = Map.of(
-            "order", "order_no",
-            "group", "group_name",
-            "key", "key_name",
-            "desc", "description",
-            "asc", "asc_order",
-            "index", "index_no",
-            "table", "table_name",
-            "class", "class_name");
 
     /** 설계 점검이 아는 타입만 남긴다. 모르는 타입은 코드 생성에서 막힌다. */
     private static final Set<String> KNOWN_TYPES = Set.of(
@@ -602,86 +587,20 @@ public class DesignDraftService {
     /**
      * 화면 경로를 점검 규칙이 받아들이는 모양으로 맞춘다.
      *
-     * AI 는 /products/{id} 처럼 중괄호를 쓰거나 "주문 완료" 같은 한글을
-     * 그대로 넣는다. 프롬프트로 부탁해 두었지만 부탁은 매번 지켜지지 않고,
-     * 점검 규칙은 매번 똑같이 오류로 판정한다. 오류가 하나라도 있으면 코드
-     * 생성이 막히므로, 규칙이 검사하는 것은 여기서 보장한다.
+     * 프롬프트로 부탁해 두었지만 부탁은 매번 지켜지지 않고, 점검 규칙은 매번
+     * 똑같이 오류로 판정한다. 오류가 하나라도 있으면 코드 생성이 막히므로,
+     * 규칙이 검사하는 것은 여기서 보장한다.
+     *
+     * 실제 규칙은 DesignRepairs 에 있다. 설계 점검의 "고치기" 버튼도 같은
+     * 함수를 쓰므로 두 곳이 같은 문제를 다르게 고칠 일이 없다.
      */
     private String safeRoute(String raw, String screenKey, Set<String> used) {
-        String value = raw == null ? "" : raw.trim();
-
-        // 경로를 아예 안 정한 화면은 그대로 둔다. 없는 경로를 지어내면
-        // 팝업이나 외부 화면에 엉뚱한 주소가 붙는다. (경고로만 남는다.)
-        if (value.isEmpty()) {
-            return "";
-        }
-
-        String route = normalizeRoute(value);
-
-        // 살릴 수 없는 경로는 화면 키에서 만든다. scr-order-done → /order-done
-        if (route == null) {
-            route = routeFromKey(screenKey);
-        }
-
-        if (used.add(route.toLowerCase(Locale.ROOT))) {
-            return route;
-        }
-
-        // 같은 경로를 쓰는 화면이 둘이면 뒤엣것은 영원히 열리지 않는다.
-        String fromKey = routeFromKey(screenKey);
-        if (used.add(fromKey.toLowerCase(Locale.ROOT))) {
-            return fromKey;
-        }
-
-        for (int suffix = 2; suffix < 100; suffix++) {
-            String candidate = route + "-" + suffix;
-            if (used.add(candidate.toLowerCase(Locale.ROOT))) {
-                return candidate;
-            }
-        }
-
-        return route;
+        return DesignRepairs.uniqueRoute(raw, screenKey, used);
     }
 
-    /** 고칠 수 있으면 고치고, 규칙에 맞지 않으면 null. */
-    private String normalizeRoute(String value) {
-        String route = value.replaceAll("\\{([A-Za-z0-9_]+)}", ":$1");
-
-        if (!route.startsWith("/")) {
-            route = "/" + route;
-        }
-
-        route = route.replaceAll("/{2,}", "/");
-
-        if (route.length() > 1 && route.endsWith("/")) {
-            route = route.substring(0, route.length() - 1);
-        }
-
-        return ROUTE.matcher(route).matches() ? route : null;
-    }
-
-    private String routeFromKey(String screenKey) {
-        String key = screenKey == null ? "" : screenKey.trim().toLowerCase(Locale.ROOT);
-        key = key.replaceFirst("^scr[-_]", "").replaceAll("[^a-z0-9\\-_]+", "-");
-        key = key.replaceAll("-{2,}", "-").replaceAll("^-|-$", "");
-
-        return key.isEmpty() ? "/screen" : "/" + key;
-    }
-
-    /**
-     * order, desc 처럼 SQL·자바에서 이미 쓰는 단어는 컬럼 이름으로 쓸 수 없다.
-     *
-     * 목록은 설계 점검 규칙의 것을 그대로 쓴다. 두 곳에 두면 한쪽에만 단어가
-     * 늘어나는 날 초안이 오류를 달고 나온다.
-     */
+    /** order, desc 처럼 SQL·자바에서 이미 쓰는 단어는 컬럼 이름으로 쓸 수 없다. */
     private String safeColumnName(String name) {
-        String key = name.toLowerCase(Locale.ROOT);
-
-        if (!ErdRules.RESERVED.contains(key)) {
-            return name;
-        }
-
-        return RESERVED_RENAMES.getOrDefault(key, key + "_value");
+        return DesignRepairs.renameReservedColumn(name);
     }
 
     private String normalizeType(String type) {
