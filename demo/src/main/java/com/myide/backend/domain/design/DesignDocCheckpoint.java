@@ -35,6 +35,18 @@ public class DesignDocCheckpoint {
     @Column(nullable = false, length = 120)
     private String label;
 
+    /**
+     * 그 시점에 문서에 무엇이 담겨 있었는지 한 줄로.
+     *
+     * 라벨만으로는 "복원 직전 자동 보관"이 여러 줄 쌓였을 때 어느 것으로
+     * 되돌려야 할지 알 수 없다. "요구사항 12 · 화면 7 · 표 5 · API 20"처럼
+     * 담긴 것을 적어 두면 목록만 보고 고를 수 있다.
+     *
+     * 예전에 만들어진 기록에는 없으므로 비어 있을 수 있다.
+     */
+    @Column(length = 200)
+    private String summary;
+
     @Lob
     @Column(name = "yjs_update_base64", nullable = false, columnDefinition = "LONGTEXT")
     private String yjsUpdateBase64;
@@ -53,12 +65,14 @@ public class DesignDocCheckpoint {
     @Builder
     private DesignDocCheckpoint(Workspace workspace,
                                String label,
+                               String summary,
                                String yjsUpdateBase64,
                                String projectionJson,
                                User createdBy) {
         this.uuid = UUID.randomUUID().toString();
         this.workspace = workspace;
         this.label = label;
+        this.summary = summary;
         this.yjsUpdateBase64 = yjsUpdateBase64;
         this.projectionJson = projectionJson;
         this.createdBy = createdBy;

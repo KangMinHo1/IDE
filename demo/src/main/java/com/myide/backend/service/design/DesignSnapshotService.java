@@ -30,6 +30,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
+import java.util.Objects;
 import java.util.Map;
 import java.util.Set;
 
@@ -167,6 +169,7 @@ public class DesignSnapshotService {
         checkpointRepository.save(DesignDocCheckpoint.builder()
                 .workspace(snapshot.getWorkspace())
                 .label("자동 보관 (문서가 크게 줄어듦)")
+                .summary(summarize(snapshot.getProjectionJson()))
                 .yjsUpdateBase64(snapshot.getYjsUpdateBase64())
                 .projectionJson(snapshot.getProjectionJson())
                 .createdBy(user)
@@ -186,9 +189,22 @@ public class DesignSnapshotService {
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "저장된 설계 문서가 없습니다."));
 
+        // 직전 기록과 내용이 같으면 새로 만들지 않는다.
+        //
+        // 되돌리기를 연달아 누르거나 초안을 만들었다가 취소하면 똑같은 내용의
+        // 기록이 줄줄이 쌓여, 정작 되돌리려는 시점을 찾을 수 없게 된다.
+        Optional<DesignDocCheckpoint> latest =
+                checkpointRepository.findFirstByWorkspace_UuidOrderByCreatedAtDesc(workspaceId);
+
+        if (latest.isPresent()
+                && Objects.equals(latest.get().getProjectionJson(), snapshot.getProjectionJson())) {
+            return DesignCheckpointResponse.from(latest.get());
+        }
+
         DesignDocCheckpoint checkpoint = checkpointRepository.save(DesignDocCheckpoint.builder()
                 .workspace(snapshot.getWorkspace())
                 .label(label == null || label.isBlank() ? "수동 저장" : label)
+                .summary(summarize(snapshot.getProjectionJson()))
                 .yjsUpdateBase64(snapshot.getYjsUpdateBase64())
                 .projectionJson(snapshot.getProjectionJson())
                 .createdBy(getUser(userId))
@@ -197,6 +213,27 @@ public class DesignSnapshotService {
         trimOldCheckpoints(workspaceId);
 
         return DesignCheckpointResponse.from(checkpoint);
+    }
+
+    /**
+     * 그 시점에 문서에 담겨 있던 것을 한 줄로.
+     *
+     * 라벨만으로는 같은 이름의 기록이 여러 줄일 때 어느 것으로 되돌려야
+     * 할지 알 수 없다. 담긴 개수를 적어 두면 목록만 보고 고를 수 있다.
+     */
+    private String summarize(String projectionJson) {
+        try {
+            DesignModelV2 model = codec.fromJson(projectionJson);
+
+            return "요구사항 " + model.requirements().size()
+                    + " · 화면 " + model.screens().size()
+                    + " · 표 " + model.erd().tables().size()
+                    + " · API " + model.apis().size();
+        } catch (Exception e) {
+            // 요약을 못 만든다고 기록 자체를 못 남기게 하면 안 된다.
+            log.debug("체크포인트 요약을 만들지 못했습니다: {}", e.getMessage());
+            return "";
+        }
     }
 
     /** 최근 것만 남기고 오래된 기록은 지운다. 문서 전체를 담고 있어 계속 쌓이면 무겁다. */
@@ -243,6 +280,7 @@ public class DesignSnapshotService {
         checkpointRepository.save(DesignDocCheckpoint.builder()
                 .workspace(snapshot.getWorkspace())
                 .label("복원 직전 자동 보관")
+                .summary(summarize(snapshot.getProjectionJson()))
                 .yjsUpdateBase64(snapshot.getYjsUpdateBase64())
                 .projectionJson(snapshot.getProjectionJson())
                 .createdBy(user)

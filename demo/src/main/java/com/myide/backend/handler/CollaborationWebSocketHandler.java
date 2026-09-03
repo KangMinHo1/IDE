@@ -1,6 +1,7 @@
 // 경로: src/main/java/com/myide/backend/handler/CollaborationWebSocketHandler.java
 package com.myide.backend.handler;
 
+import com.myide.backend.config.WebSocketConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
@@ -24,9 +25,26 @@ public class CollaborationWebSocketHandler extends BinaryWebSocketHandler {
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
+        // 컨테이너 기본값과 별개로 스프링 쪽 세션 한도가 따로 걸린다.
+        // 한쪽만 올려 두면 큰 변경이 여전히 막힌다.
+        session.setBinaryMessageSizeLimit(WebSocketConfig.MAX_MESSAGE_BYTES);
+        session.setTextMessageSizeLimit(WebSocketConfig.MAX_MESSAGE_BYTES);
+
         String room = getRoomName(session);
         rooms.computeIfAbsent(room, k -> new CopyOnWriteArraySet<>()).add(session);
         log.info("🤝 [Collab] 동시 편집 접속: 세션 ID = {}, 방 = {}", session.getId(), room);
+    }
+
+    /**
+     * 전송에 실패해도 방 전체를 멈추지 않는다.
+     *
+     * 한 사람의 연결이 막혔다고 나머지에게도 안 보내면, 한 명 때문에 팀
+     * 전체의 동시 편집이 멈춘다. 실패한 연결은 어차피 곧 정리된다.
+     */
+    @Override
+    public void handleTransportError(WebSocketSession session, Throwable exception) {
+        log.warn("⚠️ [Collab] 전송 오류: 세션 ID = {}, 이유 = {}",
+                session.getId(), exception.getMessage());
     }
 
     @Override
