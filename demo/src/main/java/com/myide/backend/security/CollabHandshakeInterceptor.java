@@ -51,9 +51,6 @@ public class CollabHandshakeInterceptor implements HandshakeInterceptor {
     public static final String ATTR_WORKSPACE_ID = "WORKSPACE_ID";
     public static final String ATTR_ROOM = "COLLAB_ROOM";
 
-    private static final String DESIGN_ROOM_PREFIX = "design:";
-    private static final String GLOBAL_ROOM_PREFIX = "global-workspace-room-";
-
     private final JwtProvider jwtProvider;
     private final WorkspaceAccessGuard accessGuard;
 
@@ -122,23 +119,14 @@ public class CollabHandshakeInterceptor implements HandshakeInterceptor {
         // 별도 처리 없음
     }
 
-    /** 방 이름에서 워크스페이스 식별자를 뽑는다. 세 형식 모두 워크스페이스를 담고 있다. */
+    /**
+     * 방 이름에서 워크스페이스 식별자를 뽑는다.
+     *
+     * 해석은 CollabRoomName 에 있다. 최초 내용 시드를 허락하는 쪽도 같은
+     * 해석을 써야 하므로, 두 벌을 두지 않고 한곳을 부른다.
+     */
     static String extractWorkspaceId(String room) {
-        if (room == null || room.isBlank()) {
-            return null;
-        }
-
-        if (room.startsWith(DESIGN_ROOM_PREFIX)) {
-            return room.substring(DESIGN_ROOM_PREFIX.length());
-        }
-
-        if (room.startsWith(GLOBAL_ROOM_PREFIX)) {
-            return room.substring(GLOBAL_ROOM_PREFIX.length());
-        }
-
-        // 코드 에디터는 workspaceId:project:branch:file 형태로 방을 만든다.
-        int separator = room.indexOf(':');
-        return separator > 0 ? room.substring(0, separator) : room;
+        return CollabRoomName.workspaceIdOf(room);
     }
 
     private String decode(String value) {
