@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 
 public record ScheduleCreateRequest(
+
         @NotBlank(message = "일정 제목은 필수입니다.")
         String title,
 
@@ -18,6 +19,9 @@ public record ScheduleCreateRequest(
         @NotNull(message = "종료일은 필수입니다.")
         LocalDate endDate,
 
-        ScheduleStatus status
+        ScheduleStatus status,
+
+        // null이면 일정 생성자가 자동 담당자
+        Long assigneeUserId
 ) {
 }

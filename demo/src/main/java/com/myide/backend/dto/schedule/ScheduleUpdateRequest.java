@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 
 public record ScheduleUpdateRequest(
+
         @NotBlank(message = "일정 제목은 필수입니다.")
         String title,
 
@@ -19,6 +20,8 @@ public record ScheduleUpdateRequest(
         LocalDate endDate,
 
         @NotNull(message = "상태는 필수입니다.")
-        ScheduleStatus status
+        ScheduleStatus status,
+
+        Long assigneeUserId
 ) {
 }

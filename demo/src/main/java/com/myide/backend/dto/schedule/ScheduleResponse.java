@@ -1,35 +1,86 @@
 package com.myide.backend.dto.schedule;
 
+import com.myide.backend.domain.User;
 import com.myide.backend.domain.schedule.Schedule;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 public record ScheduleResponse(
+
         String id,
+
         String workspaceId,
+
         String projectName,
+
         String title,
+
         String description,
+
         LocalDate startDate,
+
         LocalDate endDate,
+
         String status,
+
         boolean hasDevlog,
+
+        // 담당자
+        Long assigneeUserId,
+
+        String assigneeName,
+
         LocalDateTime createdAt,
+
         LocalDateTime updatedAt
+
 ) {
-    public static ScheduleResponse from(Schedule schedule, boolean hasDevlog) {
+
+    public static ScheduleResponse from(
+            Schedule schedule,
+            boolean hasDevlog
+    ) {
+
+        User assignee =
+                schedule.getAssignee();
+
         return new ScheduleResponse(
+
                 schedule.getUuid(),
-                schedule.getWorkspace().getUuid(),
-                schedule.getWorkspace().getName(),
+
+                schedule
+                        .getWorkspace()
+                        .getUuid(),
+
+                schedule
+                        .getWorkspace()
+                        .getName(),
+
                 schedule.getTitle(),
+
                 schedule.getDescription(),
+
                 schedule.getStartDate(),
+
                 schedule.getEndDate(),
-                schedule.getStatus().getValue(),
+
+                schedule
+                        .getStatus()
+                        .getValue(),
+
                 hasDevlog,
+
+                assignee != null
+                        ? assignee.getId()
+                        : null,
+
+                assignee != null
+                        ? assignee.getNickname()
+                        : null,
+
                 schedule.getCreatedAt(),
+
                 schedule.getUpdatedAt()
         );
     }

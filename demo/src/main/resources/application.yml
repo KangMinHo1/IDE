@@ -1,8 +1,8 @@
 server:
-  address: 0.0.0.0
   port: 8080
 
 spring:
+
   application:
     name: my-web-ide
 
@@ -52,4 +52,4 @@ github:
   client:
     id: ${GITHUB_CLIENT_ID:}
     secret: ${GITHUB_CLIENT_SECRET:}
-    redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:3000/auth/github/callback}
+    redirect-uri: ${GITHUB_REDIRECT_URI:http://localhost:3000/auth/github/callback%7D
