@@ -122,6 +122,13 @@ public class DesignModelCodec {
     private List<Map<String, Object>> buildFlowNodes(DesignModelV2 model) {
         List<Map<String, Object>> nodes = new ArrayList<>();
 
+        // 자료실과 마이페이지가 설계단계 상자와 같은 것을 보여 주려면
+        // 화면이 부르는 API 이름까지 함께 실어야 한다.
+        Map<String, String> apiLabelById = new LinkedHashMap<>();
+        for (ApiSpecV2 api : model.apis()) {
+            apiLabelById.put(api.id(), api.method() + " " + api.endpoint());
+        }
+
         for (ScreenV2 screen : model.screens()) {
             Map<String, Object> position = new LinkedHashMap<>();
             position.put("x", screen.layout().x());
@@ -132,6 +139,21 @@ public class DesignModelCodec {
             data.put("type", "client");
             // 예전 형식에는 라우트를 담을 자리가 없어 부가 설명 칸을 빌려 쓴다.
             data.put("techStack", screen.key());
+            // 아래 넷은 설계단계 화면 상자에 그대로 찍히는 것들이다.
+            // 자료실 그림이 설계단계와 달라 보이지 않으려면 함께 보내야 한다.
+            data.put("isEntry", screen.isEntry());
+            data.put("requiresAuth", screen.requiresAuth());
+            data.put("role", screen.role());
+            data.put("requirementCount", screen.requirementIds().size());
+
+            List<String> apiLabels = new ArrayList<>();
+            for (String apiId : screen.apiIds()) {
+                String label = apiLabelById.get(apiId);
+                if (label != null) {
+                    apiLabels.add(label);
+                }
+            }
+            data.put("apiLabels", apiLabels);
 
             Map<String, Object> node = new LinkedHashMap<>();
             node.put("id", screen.id());
