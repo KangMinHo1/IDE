@@ -53,6 +53,7 @@ public class DesignApiSpec {
 
     @Builder
     private DesignApiSpec(
+            String uuid,
             Workspace workspace,
             User createdBy,
             String method,
@@ -61,7 +62,8 @@ public class DesignApiSpec {
             String request,
             String response
     ) {
-        this.uuid = UUID.randomUUID().toString();
+        // uuid 를 받는 이유는 DesignRequirement 와 같다(역투영 시 제자리 갱신).
+        this.uuid = uuid == null || uuid.isBlank() ? UUID.randomUUID().toString() : uuid;
         this.workspace = workspace;
         this.createdBy = createdBy;
         this.method = method == null || method.isBlank() ? "GET" : method.toUpperCase();

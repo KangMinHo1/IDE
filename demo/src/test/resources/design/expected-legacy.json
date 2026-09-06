@@ -1,0 +1,24 @@
+{
+  "requirements": [
+    {
+      "id": "req_aaaaaaaa",
+      "category": "회원",
+      "name": "로그인",
+      "description": "이메일과 비밀번호로 로그인한다"
+    }
+  ],
+  "apiSpecs": [
+    {
+      "id": "api_cccccccc",
+      "method": "POST",
+      "endpoint": "/api/auth/login",
+      "description": "로그인",
+      "request": "{\"email\":\"a@b.c\"}",
+      "response": "{\"accessToken\":\"...\"}"
+    }
+  ],
+  "erdNodesJson": "[{\"id\":\"tbl_ffffffff\",\"type\":\"tableNode\",\"position\":{\"x\":60,\"y\":80},\"data\":{\"name\":\"users\",\"columns\":[{\"id\":\"col_11111111\",\"name\":\"id\",\"type\":\"BIGINT\",\"isPk\":true,\"isFk\":false},{\"id\":\"col_22222222\",\"name\":\"email\",\"type\":\"VARCHAR\",\"isPk\":false,\"isFk\":false}]}},{\"id\":\"tbl_99999999\",\"type\":\"tableNode\",\"position\":{\"x\":460,\"y\":80},\"data\":{\"name\":\"products\",\"columns\":[{\"id\":\"col_33333333\",\"name\":\"id\",\"type\":\"BIGINT\",\"isPk\":true,\"isFk\":false},{\"id\":\"col_44444444\",\"name\":\"user_id\",\"type\":\"BIGINT\",\"isPk\":false,\"isFk\":true}]}}]",
+  "erdEdgesJson": "[{\"id\":\"rel_88888888\",\"source\":\"tbl_99999999\",\"target\":\"tbl_ffffffff\",\"type\":\"smoothstep\",\"label\":\"회원이 상품을 소유한다\"}]",
+  "flowNodesJson": "[{\"id\":\"scr_bbbbbbbb\",\"type\":\"systemNode\",\"position\":{\"x\":120.5,\"y\":240},\"data\":{\"label\":\"로그인 화면\",\"type\":\"client\",\"techStack\":\"/login\",\"isEntry\":true,\"requiresAuth\":false,\"role\":\"modal\",\"requirementCount\":1,\"apiLabels\":[\"POST /api/auth/login\"]}},{\"id\":\"scr_dddddddd\",\"type\":\"systemNode\",\"position\":{\"x\":400,\"y\":240},\"data\":{\"label\":\"상품 목록\",\"type\":\"client\",\"techStack\":\"/products\",\"isEntry\":false,\"requiresAuth\":true,\"role\":\"page\",\"requirementCount\":0,\"apiLabels\":[]}}]",
+  "flowEdgesJson": "[{\"id\":\"trn_eeeeeeee\",\"source\":\"scr_bbbbbbbb\",\"target\":\"scr_dddddddd\",\"animated\":true,\"label\":\"로그인 버튼 클릭 (성공 시)\"}]"
+}

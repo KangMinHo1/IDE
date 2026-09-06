@@ -1,0 +1,247 @@
+package com.myide.backend.service.design;
+
+import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectReader;
+import com.myide.backend.dto.design.v2.ApiSpecV2;
+import com.myide.backend.dto.design.v2.DesignModelV2;
+import com.myide.backend.dto.design.v2.LegacyProjectionV2;
+import com.myide.backend.dto.design.v2.RelationV2;
+import com.myide.backend.dto.design.v2.RequirementV2;
+import com.myide.backend.dto.design.v2.ScreenTransitionV2;
+import com.myide.backend.dto.design.v2.ScreenV2;
+import com.myide.backend.dto.design.v2.TableV2;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * 설계 문서의 평문 사본을 읽고 쓰는 유일한 통로.
+ *
+ * 서버는 Yjs 바이너리를 해석하지 못하므로, 클라이언트가 스냅샷과 함께
+ * 보내는 평문 사본을 이 코덱으로 읽어 AI 초안과 설계 닥터, 코드 생성,
+ * 최종 보고서에 넘긴다.
+ *
+ * 역투영은 예전 화면들을 살려 두기 위한 것이다. 자세한 배경은
+ * LegacyProjectionV2 주석 참고.
+ */
+@Slf4j
+@Component
+public class DesignModelCodec {
+
+    private final ObjectMapper objectMapper;
+    private final ObjectReader lenientReader;
+
+    public DesignModelCodec(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        // 구버전 클라이언트나 AI 응답이 모르는 필드를 섞어 보내도
+        // 문서 전체를 버리지 않도록 관대하게 읽는다.
+        this.lenientReader = objectMapper
+                .reader()
+                .without(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+                .forType(DesignModelV2.class);
+    }
+
+    public DesignModelV2 fromJson(String projectionJson) {
+        if (projectionJson == null || projectionJson.isBlank()) {
+            return DesignModelV2.empty();
+        }
+
+        try {
+            DesignModelV2 model = lenientReader.readValue(projectionJson);
+            return model == null ? DesignModelV2.empty() : model;
+        } catch (Exception e) {
+            log.warn("⚠️ 설계 문서 평문 사본을 해석하지 못했습니다: {}", e.getMessage());
+            throw new IllegalArgumentException("설계 문서 형식이 올바르지 않습니다.", e);
+        }
+    }
+
+    public String toJson(DesignModelV2 model) {
+        try {
+            return objectMapper.writeValueAsString(model == null ? DesignModelV2.empty() : model);
+        } catch (Exception e) {
+            throw new IllegalStateException("설계 문서를 직렬화하지 못했습니다.", e);
+        }
+    }
+
+    /**
+     * v2 문서를 예전 형식으로 되돌린다.
+     * 프론트의 modelToLegacy 와 결과가 같아야 하므로 한쪽만 고치면 안 된다.
+     */
+    public LegacyProjectionV2 toLegacy(DesignModelV2 model) {
+        DesignModelV2 safe = model == null ? DesignModelV2.empty() : model;
+
+        List<LegacyProjectionV2.RequirementRow> requirements = new ArrayList<>();
+        for (RequirementV2 requirement : safe.requirements()) {
+            requirements.add(new LegacyProjectionV2.RequirementRow(
+                    requirement.id(),
+                    requirement.category(),
+                    requirement.name(),
+                    requirement.description()
+            ));
+        }
+
+        List<LegacyProjectionV2.ApiSpecRow> apiSpecs = new ArrayList<>();
+        for (ApiSpecV2 api : safe.apis()) {
+            apiSpecs.add(new LegacyProjectionV2.ApiSpecRow(
+                    api.id(),
+                    api.method(),
+                    api.endpoint(),
+                    api.description(),
+                    api.request(),
+                    api.response()
+            ));
+        }
+
+        boolean hasScreens = !safe.screens().isEmpty();
+
+        return new LegacyProjectionV2(
+                requirements,
+                apiSpecs,
+                writeJson(buildErdNodes(safe)),
+                writeJson(buildErdEdges(safe)),
+                hasScreens ? writeJson(buildFlowNodes(safe)) : safe.meta().legacyFlow().nodesJson(),
+                hasScreens ? writeJson(buildFlowEdges(safe)) : safe.meta().legacyFlow().edgesJson()
+        );
+    }
+
+    /**
+     * 화면 흐름을 예전 데이터 플로우 형식으로 옮긴다.
+     *
+     * 자료실과 마이페이지는 아직 예전 형식만 읽는다. 여기서 화면 흐름을
+     * 내보내지 않으면 사용자가 지금 관리하는 흐름은 그 화면들에 영영 보이지
+     * 않고, 시드 때 보관해 둔 옛 다이어그램만 계속 보인다.
+     *
+     * 화면이 하나도 없을 때만 보관된 원본을 그대로 돌려준다. 아직 새 탭을
+     * 써 보지 않은 워크스페이스에서 자료실이 갑자기 비어 보이지 않게 한다.
+     */
+    private List<Map<String, Object>> buildFlowNodes(DesignModelV2 model) {
+        List<Map<String, Object>> nodes = new ArrayList<>();
+
+        // 자료실과 마이페이지가 설계단계 상자와 같은 것을 보여 주려면
+        // 화면이 부르는 API 이름까지 함께 실어야 한다.
+        Map<String, String> apiLabelById = new LinkedHashMap<>();
+        for (ApiSpecV2 api : model.apis()) {
+            apiLabelById.put(api.id(), api.method() + " " + api.endpoint());
+        }
+
+        for (ScreenV2 screen : model.screens()) {
+            Map<String, Object> position = new LinkedHashMap<>();
+            position.put("x", screen.layout().x());
+            position.put("y", screen.layout().y());
+
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("label", screen.name());
+            data.put("type", "client");
+            // 예전 형식에는 라우트를 담을 자리가 없어 부가 설명 칸을 빌려 쓴다.
+            data.put("techStack", screen.key());
+            // 아래 넷은 설계단계 화면 상자에 그대로 찍히는 것들이다.
+            // 자료실 그림이 설계단계와 달라 보이지 않으려면 함께 보내야 한다.
+            data.put("isEntry", screen.isEntry());
+            data.put("requiresAuth", screen.requiresAuth());
+            data.put("role", screen.role());
+            data.put("requirementCount", screen.requirementIds().size());
+
+            List<String> apiLabels = new ArrayList<>();
+            for (String apiId : screen.apiIds()) {
+                String label = apiLabelById.get(apiId);
+                if (label != null) {
+                    apiLabels.add(label);
+                }
+            }
+            data.put("apiLabels", apiLabels);
+
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("id", screen.id());
+            node.put("type", "systemNode");
+            node.put("position", position);
+            node.put("data", data);
+
+            nodes.add(node);
+        }
+
+        return nodes;
+    }
+
+    private List<Map<String, Object>> buildFlowEdges(DesignModelV2 model) {
+        List<Map<String, Object>> edges = new ArrayList<>();
+
+        for (ScreenTransitionV2 transition : model.screenTransitions()) {
+            Map<String, Object> edge = new LinkedHashMap<>();
+            edge.put("id", transition.id());
+            edge.put("source", transition.from());
+            edge.put("target", transition.to());
+            edge.put("animated", true);
+            edge.put("label", transition.condition().isBlank()
+                    ? transition.trigger()
+                    : transition.trigger() + " (" + transition.condition() + ")");
+
+            edges.add(edge);
+        }
+
+        return edges;
+    }
+
+    private List<Map<String, Object>> buildErdNodes(DesignModelV2 model) {
+        List<Map<String, Object>> nodes = new ArrayList<>();
+
+        for (TableV2 table : model.erd().tables()) {
+            List<Map<String, Object>> columns = new ArrayList<>();
+            table.columns().forEach(column -> {
+                Map<String, Object> mapped = new LinkedHashMap<>();
+                mapped.put("id", column.id());
+                mapped.put("name", column.name());
+                mapped.put("type", column.type());
+                mapped.put("isPk", column.isPk());
+                mapped.put("isFk", column.isFk());
+                columns.add(mapped);
+            });
+
+            Map<String, Object> position = new LinkedHashMap<>();
+            position.put("x", table.layout().x());
+            position.put("y", table.layout().y());
+
+            Map<String, Object> data = new LinkedHashMap<>();
+            data.put("name", table.name());
+            data.put("columns", columns);
+
+            Map<String, Object> node = new LinkedHashMap<>();
+            node.put("id", table.id());
+            node.put("type", "tableNode");
+            node.put("position", position);
+            node.put("data", data);
+
+            nodes.add(node);
+        }
+
+        return nodes;
+    }
+
+    private List<Map<String, Object>> buildErdEdges(DesignModelV2 model) {
+        List<Map<String, Object>> edges = new ArrayList<>();
+
+        for (RelationV2 relation : model.erd().relations()) {
+            Map<String, Object> edge = new LinkedHashMap<>();
+            edge.put("id", relation.id());
+            edge.put("source", relation.fromTableId());
+            edge.put("target", relation.toTableId());
+            edge.put("type", "smoothstep");
+            edge.put("label", relation.note());
+            edges.add(edge);
+        }
+
+        return edges;
+    }
+
+    private String writeJson(Object value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (Exception e) {
+            throw new IllegalStateException("설계 다이어그램을 직렬화하지 못했습니다.", e);
+        }
+    }
+}

@@ -1,6 +1,7 @@
 // 경로: src/main/java/com/myide/backend/handler/CollaborationWebSocketHandler.java
 package com.myide.backend.handler;
 
+import com.myide.backend.config.WebSocketConfig;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.BinaryMessage;
@@ -22,11 +23,50 @@ public class CollaborationWebSocketHandler extends BinaryWebSocketHandler {
 
     private final Map<String, Set<WebSocketSession>> rooms = new ConcurrentHashMap<>();
 
+    /**
+     * 방마다 "최초 내용을 넣을 권한"을 한 번만 준 기록.
+     *
+     * 이것이 없으면 두 사람이 같은 파일을 동시에 열었을 때 서로 상대가
+     * 있는지 모른 채 <b>둘 다 디스크 내용을 넣어 같은 내용이 두 번</b>
+     * 들어간다. 반대로 서로 상대가 넣을 거라 여기면 <b>아무도 안 넣어
+     * 빈 화면</b>이 된다. 실제로 겪은 두 증상이 모두 여기서 나왔다.
+     *
+     * 클라이언트끼리 눈치로 정할 수 없는 판단이라 서버가 한 번만 허락한다.
+     * 설계 문서에서 쓴 seed-once 가드와 같은 방식이다.
+     */
+    private final Map<String, Long> seedClaims = new ConcurrentHashMap<>();
+
+    /**
+     * 허락을 받고도 연결하지 않은 채 이 시간이 지나면 무효로 본다.
+     *
+     * 허락받은 브라우저가 연결 전에 닫히면 아무도 시드하지 못한 채 기록만
+     * 남아, 그 파일이 영영 빈 채로 열린다. 방이 비어 있을 때만 적용하므로
+     * 정상적으로 편집 중인 방을 건드리지 않는다.
+     */
+    private static final long CLAIM_EXPIRY_MS = 15_000L;
+
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
+        // 컨테이너 기본값과 별개로 스프링 쪽 세션 한도가 따로 걸린다.
+        // 한쪽만 올려 두면 큰 변경이 여전히 막힌다.
+        session.setBinaryMessageSizeLimit(WebSocketConfig.MAX_MESSAGE_BYTES);
+        session.setTextMessageSizeLimit(WebSocketConfig.MAX_MESSAGE_BYTES);
+
         String room = getRoomName(session);
         rooms.computeIfAbsent(room, k -> new CopyOnWriteArraySet<>()).add(session);
         log.info("🤝 [Collab] 동시 편집 접속: 세션 ID = {}, 방 = {}", session.getId(), room);
+    }
+
+    /**
+     * 전송에 실패해도 방 전체를 멈추지 않는다.
+     *
+     * 한 사람의 연결이 막혔다고 나머지에게도 안 보내면, 한 명 때문에 팀
+     * 전체의 동시 편집이 멈춘다. 실패한 연결은 어차피 곧 정리된다.
+     */
+    @Override
+    public void handleTransportError(WebSocketSession session, Throwable exception) {
+        log.warn("⚠️ [Collab] 전송 오류: 세션 ID = {}, 이유 = {}",
+                session.getId(), exception.getMessage());
     }
 
     @Override
@@ -51,14 +91,64 @@ public class CollaborationWebSocketHandler extends BinaryWebSocketHandler {
             roomSessions.remove(session);
             if (roomSessions.isEmpty()) {
                 rooms.remove(room);
+
+                // 방이 비면 시드 기록도 지운다. 그래야 나중에 그 파일을 다시
+                // 열었을 때 디스크에서 새로 읽어 넣는다.
+                seedClaims.remove(room);
                 log.info("💥 [Collab] 빈 방 삭제됨: {}", room);
             }
         }
         log.info("👋 [Collab] 동시 편집 퇴장: 세션 ID = {}, 방 = {}", session.getId(), room);
     }
 
+    /**
+     * 이 방의 최초 내용을 넣을 권한을 요청한다. 방마다 한 사람만 받는다.
+     *
+     * @return 허락받았으면 true. 이미 누군가 받았으면 false 이고, 그 사람이
+     *         넣은 내용이 동기화로 오기를 기다려야 한다.
+     */
+    public boolean claimSeed(String room) {
+        if (room == null || room.isBlank()) {
+            return false;
+        }
+
+        long now = System.currentTimeMillis();
+        Long previous = seedClaims.get(room);
+
+        boolean expired = previous != null
+                && isRoomEmpty(room)
+                && now - previous > CLAIM_EXPIRY_MS;
+
+        if (previous == null || expired) {
+            // 두 요청이 같은 순간에 들어와도 한쪽만 이긴다.
+            boolean granted = expired
+                    ? seedClaims.replace(room, previous, now)
+                    : seedClaims.putIfAbsent(room, now) == null;
+
+            if (granted) {
+                log.info("🌱 [Collab] 최초 내용 넣기 허락: 방 = {}", room);
+            }
+
+            return granted;
+        }
+
+        return false;
+    }
+
+    private boolean isRoomEmpty(String room) {
+        Set<WebSocketSession> roomSessions = rooms.get(room);
+        return roomSessions == null || roomSessions.isEmpty();
+    }
+
     // 💡 [핵심 해결] 정확하게 쿼리 파라미터(?room=...)에서 방 이름을 뽑아냅니다!
     private String getRoomName(WebSocketSession session) {
+        // 핸드셰이크에서 이미 뽑아 둔 값이 있으면 그것을 쓴다.
+        // 토큰 같은 다른 쿼리 파라미터가 붙어도 방 이름이 흔들리지 않는다.
+        Object cached = session.getAttributes().get("COLLAB_ROOM");
+        if (cached instanceof String cachedRoom && !cachedRoom.isBlank()) {
+            return cachedRoom;
+        }
+
         URI uri = session.getUri();
         if (uri != null && uri.getQuery() != null) {
             String[] params = uri.getQuery().split("&");
