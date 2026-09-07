@@ -24,26 +24,21 @@ public class CollaborationWebSocketHandler extends BinaryWebSocketHandler {
     private final Map<String, Set<WebSocketSession>> rooms = new ConcurrentHashMap<>();
 
     /**
-     * 방마다 "최초 내용을 넣을 권한"을 한 번만 준 기록.
+     * 방마다 보관하는 문서 상태. base64 로 인코딩된 Yjs 업데이트다.
      *
-     * 이것이 없으면 두 사람이 같은 파일을 동시에 열었을 때 서로 상대가
-     * 있는지 모른 채 <b>둘 다 디스크 내용을 넣어 같은 내용이 두 번</b>
-     * 들어간다. 반대로 서로 상대가 넣을 거라 여기면 <b>아무도 안 넣어
-     * 빈 화면</b>이 된다. 실제로 겪은 두 증상이 모두 여기서 나왔다.
+     * 협업 서버는 중계만 하므로 방이 비면 문서도 사라진다. 그래서 파일을
+     * 열 때마다 누군가 디스크 내용을 문서에 넣어 줘야 한다. 예전에는 그
+     * "누가 넣을지"를 서버가 허락으로 정했는데, 허락받은 사람이 넣기 전에
+     * 나가 버리거나 재접속하면 아무도 넣지 못해 그 파일이 빈 채로 열렸다.
      *
-     * 클라이언트끼리 눈치로 정할 수 없는 판단이라 서버가 한 번만 허락한다.
-     * 설계 문서에서 쓴 seed-once 가드와 같은 방식이다.
+     * 그래서 허락 대신 <b>내용 자체를 주고받는다.</b> 처음 도착한 것만
+     * 채택하고 나머지에게는 채택된 것을 돌려주므로, 경쟁에서 져도 쓸 것이
+     * 있고 같은 내용이 두 번 들어가지도 않는다. 설계 문서가 쓰는 방식과
+     * 같고, 코드 파일은 디스크가 원본이라 여기서는 메모리에만 둔다.
+     *
+     * 서버는 이 문자열을 해석하지 않는다.
      */
-    private final Map<String, Long> seedClaims = new ConcurrentHashMap<>();
-
-    /**
-     * 허락을 받고도 연결하지 않은 채 이 시간이 지나면 무효로 본다.
-     *
-     * 허락받은 브라우저가 연결 전에 닫히면 아무도 시드하지 못한 채 기록만
-     * 남아, 그 파일이 영영 빈 채로 열린다. 방이 비어 있을 때만 적용하므로
-     * 정상적으로 편집 중인 방을 건드리지 않는다.
-     */
-    private static final long CLAIM_EXPIRY_MS = 15_000L;
+    private final Map<String, String> roomDocs = new ConcurrentHashMap<>();
 
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
@@ -92,53 +87,61 @@ public class CollaborationWebSocketHandler extends BinaryWebSocketHandler {
             if (roomSessions.isEmpty()) {
                 rooms.remove(room);
 
-                // 방이 비면 시드 기록도 지운다. 그래야 나중에 그 파일을 다시
-                // 열었을 때 디스크에서 새로 읽어 넣는다.
-                seedClaims.remove(room);
+                // 방이 비면 보관하던 문서도 버린다. 디스크 파일이 원본이므로
+                // 다시 열 때 거기서 새로 만들면 된다.
+                roomDocs.remove(room);
                 log.info("💥 [Collab] 빈 방 삭제됨: {}", room);
             }
         }
         log.info("👋 [Collab] 동시 편집 퇴장: 세션 ID = {}, 방 = {}", session.getId(), room);
     }
 
-    /**
-     * 이 방의 최초 내용을 넣을 권한을 요청한다. 방마다 한 사람만 받는다.
-     *
-     * @return 허락받았으면 true. 이미 누군가 받았으면 false 이고, 그 사람이
-     *         넣은 내용이 동기화로 오기를 기다려야 한다.
-     */
-    public boolean claimSeed(String room) {
+    /** 이 방에 보관 중인 문서 상태. 없으면 null. */
+    public String getDoc(String room) {
         if (room == null || room.isBlank()) {
-            return false;
+            return null;
         }
 
-        long now = System.currentTimeMillis();
-        Long previous = seedClaims.get(room);
+        return roomDocs.get(room);
+    }
 
-        boolean expired = previous != null
-                && isRoomEmpty(room)
-                && now - previous > CLAIM_EXPIRY_MS;
-
-        if (previous == null || expired) {
-            // 두 요청이 같은 순간에 들어와도 한쪽만 이긴다.
-            boolean granted = expired
-                    ? seedClaims.replace(room, previous, now)
-                    : seedClaims.putIfAbsent(room, now) == null;
-
-            if (granted) {
-                log.info("🌱 [Collab] 최초 내용 넣기 허락: 방 = {}", room);
-            }
-
-            return granted;
+    /**
+     * 이 방의 최초 문서를 등록한다.
+     *
+     * 처음 도착한 것만 채택하고, 진 쪽에는 이미 채택된 것을 돌려준다.
+     * 그래야 진 쪽도 빈 문서에 갇히지 않고 채택된 것을 그대로 쓸 수 있다.
+     */
+    public SeedOutcome seedDoc(String room, String yjsUpdate) {
+        if (room == null || room.isBlank() || yjsUpdate == null || yjsUpdate.isBlank()) {
+            return new SeedOutcome(false, null);
         }
 
-        return false;
+        String existing = roomDocs.putIfAbsent(room, yjsUpdate);
+
+        if (existing == null) {
+            log.info("🌱 [Collab] 최초 문서 등록: 방 = {}", room);
+            return new SeedOutcome(true, yjsUpdate);
+        }
+
+        return new SeedOutcome(false, existing);
     }
 
-    private boolean isRoomEmpty(String room) {
-        Set<WebSocketSession> roomSessions = rooms.get(room);
-        return roomSessions == null || roomSessions.isEmpty();
+    /**
+     * 저장 담당자가 올리는 최신 문서 상태. 마지막에 쓴 것이 남는다.
+     *
+     * 뒤늦게 들어온 사람이 최초 시드가 아니라 최신 상태를 받게 하려는 것이다.
+     * 내용은 CRDT 라 어차피 합쳐지므로 서버가 순서를 따질 필요가 없다.
+     */
+    public void saveDoc(String room, String yjsUpdate) {
+        if (room == null || room.isBlank() || yjsUpdate == null || yjsUpdate.isBlank()) {
+            return;
+        }
+
+        roomDocs.put(room, yjsUpdate);
     }
+
+    /** 시드 결과. accepted 가 false 면 이미 있던 문서를 돌려준 것이다. */
+    public record SeedOutcome(boolean accepted, String yjsUpdate) {}
 
     // 💡 [핵심 해결] 정확하게 쿼리 파라미터(?room=...)에서 방 이름을 뽑아냅니다!
     private String getRoomName(WebSocketSession session) {
