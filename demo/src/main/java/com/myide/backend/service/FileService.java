@@ -3,6 +3,7 @@ package com.myide.backend.service;
 import com.myide.backend.dto.ide.FileNode;
 import com.myide.backend.dto.ide.FileRequest;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.FileSystemUtils;
@@ -17,6 +18,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class FileService {
@@ -190,7 +192,30 @@ public class FileService {
                 Files.createDirectories(target.getParent());
             }
 
-            Files.writeString(target, request.getCode(), StandardCharsets.UTF_8);
+            String code = request.getCode() == null ? "" : request.getCode();
+
+            // 내용이 있는 파일을 빈 내용으로 덮어쓰지 않는다.
+            //
+            // 동시편집은 협업 서버가 문서를 보관하지 않아서, 방금 접속한
+            // 사람의 문서는 먼저 있던 사람이 답을 보내 줘야 채워진다. 그
+            // 전에 자동 저장이 돌면 빈 문서가 그대로 디스크에 쓰여 파일이
+            // 통째로 날아간다. 프론트에서도 막지만, 저장은 되돌릴 수 없어
+            // 서버에서 한 번 더 막는다.
+            //
+            // 오류로 돌려주지 않고 조용히 넘기는 이유는, 이 요청 자체가
+            // 클라이언트의 실수라서 사용자가 손쓸 수 있는 것이 없기 때문이다.
+            // 대신 서버 로그에 남긴다. 정말 비우려는 저장은 allowEmpty 를
+            // 실어 보내므로 여기 걸리지 않는다.
+            if (code.isEmpty()
+                    && !Boolean.TRUE.equals(request.getAllowEmpty())
+                    && Files.exists(target)
+                    && Files.size(target) > 0) {
+
+                log.warn("⚠️ [File] 빈 내용 저장을 막았습니다: {}", target);
+                return;
+            }
+
+            Files.writeString(target, code, StandardCharsets.UTF_8);
 
             codeMapService.invalidateCache(
                     request.getWorkspaceId(),

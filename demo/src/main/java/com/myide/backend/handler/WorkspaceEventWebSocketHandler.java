@@ -95,6 +95,37 @@ public class WorkspaceEventWebSocketHandler extends TextWebSocketHandler {
         broadcast(room, message);
     }
 
+    /*
+     * 브랜치가 생기거나 사라졌음을 같은 프로젝트를 보는 모두에게 알린다.
+     *
+     * 방 이름에는 브랜치가 들어 있다. 그래서 파일 이벤트처럼 한 방에만
+     * 보내면 정작 다른 브랜치를 보고 있는 사람에게는 닿지 않는다. 브랜치
+     * 목록은 어느 브랜치에 있든 같은 것을 봐야 하므로, 같은 워크스페이스와
+     * 프로젝트에 속한 방 전체로 보낸다.
+     */
+    public void broadcastBranchChanged(
+            String workspaceId,
+            String projectName,
+            String action,
+            String branchName
+    ) {
+        String roomPrefix = "workspace:" + workspaceId + ":project:" + projectName + ":branch:";
+
+        BranchChangedMessage message = new BranchChangedMessage(
+                "BRANCH_CHANGED",
+                action,
+                workspaceId,
+                projectName,
+                branchName
+        );
+
+        for (String room : rooms.keySet()) {
+            if (room.startsWith(roomPrefix)) {
+                broadcast(room, message);
+            }
+        }
+    }
+
     private void broadcast(String room, Object payload) {
         Set<WebSocketSession> sessions = rooms.get(room);
 
@@ -146,6 +177,29 @@ public class WorkspaceEventWebSocketHandler extends TextWebSocketHandler {
         }
 
         return branchName;
+    }
+
+    @Getter
+    private static class BranchChangedMessage {
+        private final String type;
+        private final String action;
+        private final String workspaceId;
+        private final String projectName;
+        private final String branchName;
+
+        public BranchChangedMessage(
+                String type,
+                String action,
+                String workspaceId,
+                String projectName,
+                String branchName
+        ) {
+            this.type = type;
+            this.action = action;
+            this.workspaceId = workspaceId;
+            this.projectName = projectName;
+            this.branchName = branchName;
+        }
     }
 
     @Getter

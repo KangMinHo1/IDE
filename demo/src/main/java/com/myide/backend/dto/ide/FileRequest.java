@@ -55,6 +55,16 @@ public class FileRequest {
 
     private String code;
 
+    /*
+     * 빈 내용으로 덮어쓰는 것을 허용할지 여부입니다.
+     *
+     * 동시편집 자동 저장이 동기화가 끝나기 전에 저장을 보내면, 아직 비어
+     * 있는 문서가 그대로 디스크에 쓰이면서 멀쩡한 파일이 통째로 날아갑니다.
+     * 그래서 서버는 기본적으로 빈 내용 덮어쓰기를 막고, 사용자가 직접
+     * 비우려고 누른 저장만 이 값을 실어 보냅니다.
+     */
+    private Boolean allowEmpty;
+
     @Pattern(regexp = "^(?i)(file|folder)$", message = "타입은 'file' 또는 'folder'만 가능합니다.")
     private String type;
 

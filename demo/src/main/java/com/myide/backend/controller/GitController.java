@@ -274,6 +274,14 @@ public class GitController {
 
         projectService.createBranch(request);
 
+        // 다른 사람의 브랜치 목록도 새로고침 없이 갱신되도록 알린다.
+        workspaceEventWebSocketHandler.broadcastBranchChanged(
+                request.getWorkspaceId(),
+                request.getProjectName(),
+                "CREATE",
+                branchName
+        );
+
         return ResponseEntity.ok("브랜치 생성됨");
     }
 
@@ -291,6 +299,13 @@ public class GitController {
         Path worktreePath = workspaceService.getProjectPath(workspaceId, projectName, branchName);
 
         gitService.deleteBranch(masterRepoPath, worktreePath, branchName);
+
+        workspaceEventWebSocketHandler.broadcastBranchChanged(
+                workspaceId,
+                projectName,
+                "DELETE",
+                branchName
+        );
 
         return ResponseEntity.ok("브랜치가 안전하게 삭제되었습니다.");
     }
